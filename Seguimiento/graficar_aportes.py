@@ -29,6 +29,7 @@ import logging
 import platform
 import re
 import sys
+import textwrap
 import time
 import unicodedata
 import uuid
@@ -165,18 +166,37 @@ def leer_aportes(ruta: Path) -> pd.DataFrame:
     return df
 
 
+def _leer_fecha(valor):
+    """Fecha de Excel o texto dd/mm/aaaa -> Timestamp normalizado, o None si no se puede leer."""
+    if valor is None or (not isinstance(valor, str) and pd.isna(valor)):
+        return None
+    f = pd.to_datetime(valor, errors="coerce", dayfirst=isinstance(valor, str))
+    return None if pd.isna(f) else f.normalize()
+
+
 def definir_ventana(ruta: Path, aportes: pd.DataFrame) -> tuple[pd.Timestamp, pd.Timestamp]:
-    """Fechas de la hoja 'parámetros' (col B) si su columna C = 'si'; si no, último mes de datos."""
+    """Fechas de la hoja 'parámetros' (col B) si su columna C = 'si'; si no, último mes de datos.
+
+    Si hay fechas activas pero son inconsistentes (ilegibles, inicio > fin o sin datos de
+    aportes en el rango) se usa el último mes de información y se deja una advertencia.
+    """
     datos = aportes.dropna(subset=list(aportes.columns[1:]), how="all")
     ultima = (datos if len(datos) else aportes)["Fecha"].max()
-    ini = ultima - pd.Timedelta(days=DIAS_ATRAS_POR_DEFECTO)
-    fin = ultima
+    ini_def = ultima - pd.Timedelta(days=DIAS_ATRAS_POR_DEFECTO)
+    fin_def = ultima
     log.info("Ventana por defecto: %s -> %s (última fecha con datos, un mes atrás)",
-             ini.date(), fin.date())
+             ini_def.date(), fin_def.date())
 
-    p = pd.read_excel(ruta, sheet_name=HOJA_PARAMETROS, header=None)
+    try:
+        p = pd.read_excel(ruta, sheet_name=HOJA_PARAMETROS, header=None)
+    except Exception as e:  # hoja ausente o ilegible
+        log.warning("Parámetros: no se pudo leer la hoja '%s' (%s); se usa el último mes",
+                    HOJA_PARAMETROS, e)
+        return ini_def, fin_def
     log.debug("Hoja parámetros (crudo):\n%s", p.dropna(how="all").to_string())
+
     # Fila 2 = inicio, fila 3 = fin (formato: A etiqueta, B fecha, C activa)
+    fechas, motivos = {}, []
     for clave, i in {"inicio": 1, "fin": 2}.items():
         try:
             valor, activa = p.iloc[i, 1], p.iloc[i, 2]
@@ -184,18 +204,28 @@ def definir_ventana(ruta: Path, aportes: pd.DataFrame) -> tuple[pd.Timestamp, pd
             log.warning("Parámetros: no se encontró la fila de fecha de %s", clave)
             continue
         activa_ok = norm(activa) in ("si", "s", "yes", "true", "1")
-        fecha = pd.to_datetime(valor, errors="coerce")
-        usar = activa_ok and pd.notna(fecha)
-        log.info("Parámetro fecha %s: valor=%s activa=%r -> %s", clave, valor, activa,
-                 "USADA" if usar else "ignorada (se usa valor por defecto)")
-        if usar:
-            if clave == "inicio":
-                ini = fecha.normalize()
-            else:
-                fin = fecha.normalize()
-    if ini > fin:
-        log.error("Ventana inválida (inicio %s > fin %s); se intercambian", ini.date(), fin.date())
-        ini, fin = fin, ini
+        if not activa_ok:
+            log.info("Parámetro fecha %s: valor=%r activa=%r -> ignorada (no activa)", clave, valor, activa)
+            continue
+        fecha = _leer_fecha(valor)
+        if fecha is None:
+            motivos.append(f"fecha de {clave} activa pero ilegible (valor={valor!r})")
+            log.info("Parámetro fecha %s: valor=%r activa=%r -> ILEGIBLE", clave, valor, activa)
+        else:
+            fechas[clave] = fecha
+            log.info("Parámetro fecha %s: valor=%s activa=%r -> USADA", clave, fecha.date(), activa)
+
+    ini = fechas.get("inicio", ini_def)
+    fin = fechas.get("fin", fin_def)
+    if not motivos and fechas:
+        if ini > fin:
+            motivos.append(f"inicio ({ini.date()}) es posterior a fin ({fin.date()})")
+        elif not ((aportes["Fecha"] >= ini) & (aportes["Fecha"] <= fin)).any():
+            motivos.append(f"no hay datos de aportes entre {ini.date()} y {fin.date()}")
+    if motivos:
+        log.warning("Parámetros de fechas inconsistentes (%s); se usa el último mes de información: %s -> %s",
+                    "; ".join(motivos), ini_def.date(), fin_def.date())
+        ini, fin = ini_def, fin_def
     log.info("Ventana final de gráficos: %s -> %s", ini.date(), fin.date())
     return ini, fin
 
@@ -227,6 +257,7 @@ def leer_drivers(ruta: Path, prioridad: pd.DataFrame) -> pd.DataFrame:
     df["presente_n"] = df["Presente"].map(norm)
     df["Impacto Estimado"] = pd.to_numeric(df["Impacto Estimado"], errors="coerce")
     df["Nota"] = df["Nota"].where(df["Nota"].notna(), "").astype(str).str.strip()
+    df["comentarios"] = df["comentarios"].where(df["comentarios"].notna(), "").astype(str).str.strip()
 
     desconocidas = sorted(set(df["clave"]) - set(prioridad["clave"]) - {""})
     if desconocidas:
@@ -282,7 +313,7 @@ def drivers_de_cuenca(drv: pd.DataFrame, prioridad: pd.DataFrame, cuenca: str,
 
 def segmentos(sel: pd.DataFrame) -> pd.DataFrame:
     """Unifica días consecutivos con misma variable, nota e impacto en una sola barra."""
-    cols = ["clave", "Variable", "ini", "fin", "nota", "impacto", "lugar"]
+    cols = ["clave", "Variable", "ini", "fin", "nota", "impacto", "lugar", "coment"]
     if sel.empty:
         return pd.DataFrame(columns=cols)
     sel = sel.sort_values(["clave", "Fecha"])
@@ -295,12 +326,15 @@ def segmentos(sel: pd.DataFrame) -> pd.DataFrame:
             if (actual and actual["llave"] == llave
                     and r["Fecha"] - actual["fin"] == pd.Timedelta(days=1)):
                 actual["fin"] = r["Fecha"]
+                if r["comentarios"]:
+                    actual["coment"].append((r["Fecha"], r["comentarios"]))
             else:
                 if actual:
                     out.append(actual)
                 actual = {"llave": llave, "clave": clave, "Variable": str(r["Variable"]).strip(),
                           "ini": r["Fecha"], "fin": r["Fecha"], "nota": r["Nota"],
-                          "impacto": imp, "lugar": r["Lugar"]}
+                          "impacto": imp, "lugar": r["Lugar"],
+                          "coment": [(r["Fecha"], r["comentarios"])] if r["comentarios"] else []}
         out.append(actual)
     return pd.DataFrame(out).drop(columns="llave")
 
@@ -321,6 +355,17 @@ def relleno_media(x, y, ref=100.0):
     return xs, [max(v, ref) for v in ys], [min(v, ref) for v in ys]
 
 
+def texto_comentarios(coment: list) -> str:
+    """Comentarios de una barra para el hover: uno solo si es igual todos los días; si no, por día."""
+    if not coment:
+        return ""
+    unicos = list(dict.fromkeys(c for _, c in coment))
+    envolver = lambda t: "<br>".join(textwrap.wrap(html.escape(t), 60))
+    if len(unicos) == 1:
+        return "<br>Comentarios: " + envolver(unicos[0])
+    return "<br>Comentarios:<br>" + "<br>".join(envolver(f"{f:%d %b}: {c}") for f, c in coment)
+
+
 def construir_figura(cuenca: str, serie: pd.DataFrame, seg: pd.DataFrame,
                      orden_vars: list[str], ini: pd.Timestamp, fin: pd.Timestamp) -> go.Figure:
     n = max(len(orden_vars), 1)
@@ -331,7 +376,10 @@ def construir_figura(cuenca: str, serie: pd.DataFrame, seg: pd.DataFrame,
                         row_heights=[1 - frac, frac])
 
     # --- Serie de aportes ---
-    x, y = list(serie["Fecha"]), list(serie[cuenca])
+    # Cada dato diario se dibuja a mediodía: queda centrado en la columna de su día,
+    # que es la que ocupan las barras de drivers ([día 00:00, día+1 00:00)).
+    x = list(serie["Fecha"] + pd.Timedelta(hours=12))
+    y = list(serie[cuenca])
     xs, arr, abj = relleno_media(x, y)
     base = [100.0] * len(xs)
     for techo, color in ((arr, C_ARRIBA), (abj, C_ABAJO)):
@@ -360,7 +408,8 @@ def construir_figura(cuenca: str, serie: pd.DataFrame, seg: pd.DataFrame,
         hover = (f"<b>{html.escape(r['Variable'])}</b><br>"
                  f"{r['ini']:%d %b} – {r['fin']:%d %b %Y} ({dias} d)<br>"
                  f"Nota: {html.escape(r['nota']) or '—'}<br>"
-                 f"Impacto estimado: {imp}<br>Lugar: {html.escape(str(r['lugar']))}")
+                 f"Impacto estimado: {imp}<br>Lugar: {html.escape(str(r['lugar']))}"
+                 + texto_comentarios(r["coment"]))
         fig.add_trace(go.Scatter(
             x=[r["ini"], fin_b, fin_b, r["ini"], r["ini"]],
             y=[yc - h, yc - h, yc + h, yc + h, yc - h], mode="lines", fill="toself",
@@ -388,13 +437,15 @@ def construir_figura(cuenca: str, serie: pd.DataFrame, seg: pd.DataFrame,
                      gridcolor="#e6e6e6", zeroline=False)
     fig.update_yaxes(tickmode="array", tickvals=list(range(len(orden_vars))),
                      ticktext=orden_vars, range=[len(orden_vars) - 0.4, -0.6],
-                     row=2, col=1, gridcolor="#efefef", tickfont=dict(size=11))
+                     row=2, col=1, gridcolor="#efefef", tickfont=dict(size=11), automargin=True)
     for fila in (1, 2):
-        fig.update_xaxes(range=rango, gridcolor="#e6e6e6", showspikes=True, spikemode="across",
+        fig.update_xaxes(range=rango, matches="x" if fila == 2 else None, gridcolor="#e6e6e6", showspikes=True, spikemode="across",
                          spikethickness=1, spikecolor="#888", tickformat="%d %b\n%Y",
                          row=fila, col=1)
     fig.update_layout(
-        title=dict(text=f"Aportes {cuenca} y moduladores climáticos", x=0.01, font=dict(size=18)),
+        title=dict(text=f"Seguimiento de Aportes {cuenca} y moduladores climáticos",
+                   x=0.5, xanchor="center", font=dict(size=18)),
+        hoverlabel=dict(align="left"),
         height=alto_tot, template="plotly_white",
         hovermode="closest", margin=dict(l=220, r=30, t=70, b=60),
         legend=dict(orientation="h", x=0.5, xanchor="center", y=-0.1),

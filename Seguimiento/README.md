@@ -54,8 +54,9 @@ python graficar_aportes.py
 
 ## Reglas
 - Cada columna de `Aportes %MH` (salvo `Fecha`) es una cuenca; sin datos -> no se grafica. Cuencas nuevas se detectan solas.
-- Fechas: hoja `parámetros`, col. B, solo si col. C = "si" (inicio y fin por separado). Si no, última fecha con datos y 30 días atrás.
+- Fechas: hoja `parámetros`, col. B, solo si col. C = "si" (inicio y fin por separado; si solo una está activa, la otra toma el valor por defecto). Si ninguna está activa: última fecha con datos y 30 días atrás. Si están activas pero son inconsistentes (ilegibles, inicio > fin o sin datos en el rango) se usa el último mes de información y se registra una advertencia en el log.
 - Drivers: orden de la hoja `Prioridad`; `Remover`=si excluye, `no` incluye, vacío -> decide `Incluir` día a día.
 - Solo `Presente`="si". Lugar `Colombia` por defecto; si hay filas con el nombre de la cuenca, prevalecen para esa variable y día.
-- Color por `Impacto Estimado`: >1 azul, <1 ocre (más intenso a mayor diferencia), =1 o vacío gris. Texto = `Nota`.
+- Color por `Impacto Estimado`: >1 azul, <1 ocre (más intenso a mayor diferencia), =1 o vacío gris. Texto = `Nota`. El hover de cada barra muestra variable, fechas, nota, impacto, lugar y los `comentarios` de `Driver_Clim`.
 - Días consecutivos con misma variable, nota e impacto se unifican en una barra.
+- Ambos paneles comparten el eje de fechas: cada dato diario de aportes se dibuja al centro de la columna de su día, igual que las barras.
