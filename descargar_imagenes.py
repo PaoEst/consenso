@@ -1,10 +1,12 @@
 #!/usr/bin/env python3  # Línea "shebang": permite ejecutar el archivo directamente con Python 3 en Linux/macOS
 """Descarga diaria de imágenes listadas en Lista_de_Insumos.xlsx.
 
-Estructura de salida:  <salida>/<variable>/<dd_mmm_aaaa>/<filename>_<YYYYMMDD>.<ext>
-Ejemplo:               descargas/MJO/29_sep_2026/vel_pote_200hpa_hovm_20260929.gif
+Estructura de salida:  <salida>/<Carpeta>/<Variable>/<dd_mmm_aaaa>/<filename>_<YYYYMMDD>.<ext>
+Ejemplo:               descargas/Seguimiento/MJO/29_sep_2026/vel_pote_200hpa_hovm_20260929.gif
 
-Columnas usadas del Excel: Variable, filename_type, filename, Link de imagen.
+Columnas usadas del Excel: Carpeta, Variable, filename_type, filename, Link de imagen, Descargar.
+  - Descargar = "si": se descarga la imagen; cualquier otro valor ("no", vacío): se omite.
+  - Si el archivo del día ya existe, se sobrescribe (se reemplaza por el nuevo).
   - filename_type = "fijo":     la URL es siempre la misma.
   - filename_type = "variable": la URL contiene una fecha YYYYMMDD (p. ej.
     wk1.wk2_20260831.wnd850.png) que se reemplaza por la fecha del día.
@@ -58,26 +60,35 @@ def norm(s) -> str:  # Normaliza un texto para comparar encabezados
     return re.sub(r"\s+", " ", str(s or "")).strip().lower()  # Minúsculas, sin espacios dobles ni extremos
 
 
+def quiere_descargar(valor) -> bool:  # Interpreta el contenido de la columna "Descargar"
+    return norm(valor) in ("si", "sí", "s", "yes", "true", "1")  # Solo un "sí" explícito activa la descarga; "no" o vacío = no descargar
+
+
 def leer_tabla(ruta: Path):  # Lee el Excel y devuelve la lista de imágenes a descargar
-    """Lee el Excel y devuelve filas con variable (heredada de celdas vacías)."""
+    """Lee el Excel y devuelve filas con carpeta y variable (heredadas de celdas vacías)."""
     import openpyxl  # Se importa aquí para que --help funcione aunque no esté instalado
     ws = openpyxl.load_workbook(ruta, data_only=True).worksheets[0]  # Abre la primera hoja del libro
     filas = ws.iter_rows(values_only=True)  # Iterador de filas con solo los valores de las celdas
     cab = [norm(c) for c in next(filas)]  # Primera fila = encabezados, normalizados
-    req = ["variable", "filename_type", "filename", "link de imagen"]  # Columnas obligatorias
+    req = ["carpeta", "variable", "filename_type", "filename", "link de imagen", "descargar"]  # Columnas obligatorias
     faltan = [c for c in req if c not in cab]  # Detecta las columnas obligatorias ausentes
     if faltan:  # Si falta alguna...
         raise SystemExit(f"Faltan columnas en {ruta.name}: {faltan}")  # ...termina con un mensaje claro
     idx = {c: cab.index(c) for c in req + (["insumo"] if "insumo" in cab else [])}  # Posición de cada columna (y "insumo" si existe)
-    out, variable = [], None  # Lista de resultados y variable vigente (para celdas vacías)
+    out, carpeta, variable = [], None, None  # Lista de resultados, y carpeta/variable vigentes (para celdas vacías)
     for n, fila in enumerate(filas, start=2):  # Recorre los datos; n = número de fila en Excel
         g = lambda k: (str(fila[idx[k]]).strip() if k in idx and fila[idx[k]] else "")  # Obtiene el texto de una columna ("" si vacía)
+        if g("carpeta"):  # Si la celda Carpeta trae valor...
+            carpeta = g("carpeta")  # ...pasa a ser la carpeta vigente (las vacías heredan la anterior)
         if g("variable"):  # Si la celda Variable trae valor...
             variable = g("variable")  # ...pasa a ser la variable vigente (las vacías heredan la anterior)
         if not (g("filename") and g("link de imagen")):  # Si falta nombre o enlace...
             continue  # ...se omite la fila
-        out.append(dict(fila=n, variable=variable or "sin_variable",  # Guarda la fila y su variable
+        out.append(dict(fila=n, carpeta=carpeta or "sin_carpeta",  # Guarda la fila y su carpeta
+                        variable=variable or "sin_variable",  # y su variable
                         insumo=g("insumo"), tipo=norm(g("filename_type")),  # Descripción y tipo (fijo/variable)
+                        descargar_valor=g("descargar"),  # Texto original de la columna Descargar (para el log)
+                        descargar=quiere_descargar(g("descargar")),  # True si debe descargarse
                         filename=g("filename"), url=g("link de imagen")))  # Nombre base y URL de la imagen
     return out  # Devuelve todas las imágenes a procesar
 
@@ -139,8 +150,6 @@ def main():  # Función principal del programa
                          "probar hasta N días anteriores (defecto 3)")
     ap.add_argument("--timeout", type=int, default=60)  # Segundos máximos de espera por descarga
     ap.add_argument("--reintentos", type=int, default=3)  # Intentos por URL ante fallos de red/5xx
-    ap.add_argument("--forzar", action="store_true",  # Bandera: si se pasa, vale True
-                    help="sobrescribir si el archivo del día ya existe")
     a = ap.parse_args()  # Lee y valida los argumentos recibidos
 
     hoy = datetime.strptime(a.fecha, "%Y-%m-%d").date() if a.fecha else date.today()  # Fecha de trabajo: la indicada o la de hoy
@@ -171,12 +180,21 @@ def main():  # Función principal del programa
         return 2  # Termina con código 2 (error de configuración)
     log.info("%d insumos a procesar", len(filas))  # Registra cuántas imágenes se procesarán
 
-    cuentas = {"ok": 0, "existente": 0, "error": 0}  # Contadores para el resumen final
+    cuentas = {"ok": 0, "omitido": 0, "error": 0}  # Contadores para el resumen final
     for f in filas:  # Procesa cada imagen de la tabla
-        variable, dia = limpiar(f["variable"]), carpeta_dia(hoy)  # Nombres de carpeta de variable y de día
-        base = {"fecha_ejecucion": str(hoy), "variable": f["variable"],  # Datos comunes a todos los registros de auditoría
+        carpeta, variable, dia = limpiar(f["carpeta"]), limpiar(f["variable"]), carpeta_dia(hoy)  # Nombres de carpeta, variable y día
+        base = {"fecha_ejecucion": str(hoy), "carpeta": f["carpeta"], "variable": f["variable"],  # Datos comunes a todos los registros de auditoría
                 "insumo": f["insumo"], "fila_excel": f["fila"],  # de esta imagen: descripción y fila de origen
                 "filename_type": f["tipo"], "filename": f["filename"]}  # tipo (fijo/variable) y nombre base
+        if not f["descargar"]:  # Si la columna Descargar no dice "si"...
+            if norm(f["descargar_valor"]) not in ("no", "n", "false", "0"):  # ...y tampoco es un "no" claro (vacío o texto raro)...
+                log.warning("[%s] fila %d: valor de Descargar no reconocido (%r); se omite",  # ...se avisa en el log
+                            f["filename"], f["fila"], f["descargar_valor"])
+            log.info("[%s/%s/%s] Descargar=%r: no se descarga", f["carpeta"], f["variable"],  # Se informa que se omite
+                     f["filename"], f["descargar_valor"])
+            audit(**base, resultado="omitido_descargar_no", descargar=f["descargar_valor"])  # Y se registra en la auditoría
+            cuentas["omitido"] += 1  # Se cuenta como omitida (no es un error)
+            continue  # Pasa a la siguiente imagen
         # Candidatas: fijo -> URL tal cual; variable -> fecha de hoy y días previos.
         if f["tipo"] == "variable":  # URL que cambia cada día
             if not FECHA_RE.search(f["url"]):  # Si la URL no contiene una fecha YYYYMMDD...
@@ -187,9 +205,9 @@ def main():  # Función principal del programa
         else:  # URL fija
             cand = [(f["url"], None)]  # Una sola candidata: la URL tal cual
 
-        resultado = None  # Resultado final de esta imagen (ok/existente/error)
+        resultado = None  # Resultado final de esta imagen (ok/error)
         for url, fecha_url in cand:  # Prueba cada URL candidata en orden
-            log.info("[%s/%s] GET %s", f["variable"], f["filename"], url)  # Registra la descarga que se intenta
+            log.info("[%s/%s/%s] GET %s", f["carpeta"], f["variable"], f["filename"], url)  # Registra la descarga que se intenta
             try:  # Intenta descargar
                 datos, info = descargar(url, a.timeout, a.reintentos)  # Descarga con reintentos
             except urllib.error.HTTPError as e:  # El servidor devolvió un error HTTP
@@ -214,16 +232,15 @@ def main():  # Función principal del programa
                 break  # No se prueban más candidatas
 
             ext = extension(url, info["content_type"])  # Extensión del archivo final
-            destino = a.salida / variable / dia / (  # Ruta final: salida/variable/día/nombre
+            destino = a.salida / carpeta / variable / dia / (  # Ruta final: salida/carpeta/variable/día/nombre
                 f"{limpiar(f['filename'])}_{hoy:%Y%m%d}{ext}")  # Nombre = filename + "_YYYYMMDD" + extensión
             sha = hashlib.sha256(datos).hexdigest()  # Huella SHA-256 del contenido descargado
-            if destino.exists() and not a.forzar:  # Si ya se descargó hoy y no se pidió forzar...
-                log.info("[%s] ya existe %s (se omite; use --forzar)", f["filename"], destino)  # ...se informa
-                audit(**base, url_solicitada=url, resultado="existente",  # Se registra en la auditoría
-                      ruta=str(destino), sha256=sha, bytes=len(datos))
-                resultado = "existente"  # Resultado: ya existía
-                break  # No se prueban más candidatas
-            guardar_atomico(destino, datos)  # Guarda la imagen en disco
+            sha_previo = None  # Huella del archivo anterior (si se sobrescribe)
+            if destino.exists():  # Si ya existía un archivo con ese nombre...
+                sha_previo = hashlib.sha256(destino.read_bytes()).hexdigest()  # ...se guarda su huella para la auditoría
+                log.info("[%s] ya existía %s; se sobrescribe (%s)", f["filename"], destino,  # ...y se informa que se reemplaza
+                         "contenido distinto" if sha_previo != sha else "contenido idéntico")
+            guardar_atomico(destino, datos)  # Guarda la imagen en disco (reemplaza si ya existía)
             if fecha_url and fecha_url != hoy:  # Si se usó la imagen de un día anterior...
                 log.warning("[%s] la imagen de hoy no existía; se usó la del %s",  # ...se deja constancia
                             f["filename"], fecha_url)
@@ -231,6 +248,7 @@ def main():  # Función principal del programa
                      len(datos), sha[:12])
             audit(**base, url_solicitada=url, resultado="ok", ruta=str(destino),  # Registro de auditoría completo
                   bytes=len(datos), sha256=sha,
+                  sobrescrito=sha_previo is not None, sha256_previo=sha_previo,  # Indica si reemplazó un archivo y la huella del anterior
                   fecha_en_url=str(fecha_url) if fecha_url else None, **info)
             resultado = "ok"  # Resultado: descargada correctamente
             break  # Ya no se necesitan más candidatas
@@ -240,8 +258,8 @@ def main():  # Función principal del programa
             resultado = "error"  # Resultado: error
         cuentas[resultado] += 1  # Suma al contador correspondiente
 
-    log.info("=== FIN run=%s ok=%d existentes=%d errores=%d",  # Resumen final en el log
-             run_id, cuentas["ok"], cuentas["existente"], cuentas["error"])
+    log.info("=== FIN run=%s ok=%d omitidos=%d errores=%d",  # Resumen final en el log
+             run_id, cuentas["ok"], cuentas["omitido"], cuentas["error"])
     audit(evento="resumen", **cuentas)  # Resumen final en la auditoría
     auditoria.close()  # Cierra el archivo de auditoría
     return 1 if cuentas["error"] else 0  # Código de salida: 1 si hubo errores, 0 si todo bien
