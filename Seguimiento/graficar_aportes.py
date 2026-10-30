@@ -230,8 +230,8 @@ def definir_ventana(ruta: Path, aportes: pd.DataFrame) -> tuple[pd.Timestamp, pd
     return ini, fin
 
 
-def leer_prioridad(ruta: Path) -> pd.DataFrame:
-    df = leer_hoja(ruta, HOJA_PRIORIDAD)
+def leer_prioridad(ruta: Path, hoja: str = HOJA_PRIORIDAD) -> pd.DataFrame:
+    df = leer_hoja(ruta, hoja)
     df = df.iloc[:, :2].copy()
     df.columns = ["Variable", "Remover"]
     df = df.dropna(subset=["Variable"]).copy()

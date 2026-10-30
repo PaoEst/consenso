@@ -1,15 +1,23 @@
-# Seguimiento: aportes por cuenca y moduladores climáticos
+# Seguimiento y consenso de aportes por cuenca
 
-Proyecto independiente. `graficar_aportes.py` genera un HTML interactivo (Plotly) por cada
-cuenca de la hoja `Aportes %MH`: arriba la serie de aportes (% de la media histórica) y
-abajo los drivers climáticos presentes.
+Proyecto independiente con dos flujos:
 
-## Archivos (todos en esta carpeta)
-- `Seguimiento_Aportes.xlsx` (hojas `Aportes %MH`, `parámetros`) y `Seguimiento_Drivers.xlsx` (hojas `Prioridad`, `Driver_Clim`):
-  el script **siempre** lee estos archivos desde su propia carpeta. Se editan aquí mismo.
-- `graficar_aportes.py`, `requirements.txt`.
-- `salida/` (se genera): un HTML por cuenca + `index.html`.
-- `logs/ejecucion.log` (se genera): bitácora de auditoría acumulativa (run_id, SHA-256 de los Excel, ventana de fechas, advertencias, barras por cuenca).
+1. **Consenso de expertos** (principal): `crear_graficos_consenso.py` genera por cuenca un gráfico
+   interactivo con el seguimiento (aportes + drivers) a la izquierda, el pronóstico de drivers a la
+   derecha y los cuadros para que cada evaluador registre su pronóstico de aportes (S1..S5 o resto
+   del mes). `consolidar_votos.py` registra los votos en `Consenso.xlsx` y genera la consolidación
+   por ronda.
+2. **Solo seguimiento**: `graficar_aportes.py` (gráfico de aportes + drivers de seguimiento).
+
+## Archivos (todos en esta carpeta; los scripts siempre los leen de aquí)
+- `Seguimiento_Aportes.xlsx` (`Aportes %MH`, `parámetros`), `Seguimiento_Drivers.xlsx` (`Prioridad`, `Driver_Clim`),
+  `Pronostico_Drivers.xlsx` (`Priodidad`/`Prioridad`, `Driver_Clim`) y `Consenso.xlsx`
+  (`Fechas`, `Evaluadores_Tecnicos`, `Registros`).
+- `<año>/<mes>/<AAAA-MM-DD>/` (se genera; fecha = "Fecha de realización del consenso" de `Consenso.xlsx > Fechas`):
+  `Consenso_<cuenca>.html`, `votos/` y `consolidacion/`.
+- `logs/ejecucion.log`: bitácora de auditoría acumulativa de todos los scripts (run_id, SHA-256 de los Excel,
+  fechas usadas, advertencias, votos aceptados/rechazados, filas escritas). `logs/backups/` guarda una copia de
+  `Consenso.xlsx` antes de cada escritura.
 
 ## Instalación en Windows
 
@@ -35,24 +43,50 @@ abajo los drivers climáticos presentes.
    ```
    pip install -r requirements.txt
    ```
-5. **Ejecutar** (con los Excel cerrados y en esta misma carpeta):
-   ```
-   python graficar_aportes.py
-   ```
-   Abre `salida\index.html` con el navegador para ver los gráficos (requiere internet para cargar Plotly).
+5. **Ejecutar** (con los Excel cerrados y en esta misma carpeta), ver "Flujo del consenso" más abajo.
 
 **Problemas frecuentes**
 - *"python no se reconoce como comando"*: prueba `py` en lugar de `python`, o reinstala Python marcando "Add to PATH".
 - *`PermissionError` o no encuentra el Excel*: cierra los archivos en Excel y confirma que `Seguimiento_Aportes.xlsx` y `Seguimiento_Drivers.xlsx` están junto al script.
 - Ante cualquier error revisa `logs\ejecucion.log`.
 
-## Uso
+## Flujo del consenso
+1. **Preparar los Excel** en esta carpeta (seguimiento, pronóstico, fechas y evaluadores en `Consenso.xlsx`).
+2. **Generar los gráficos:**
+   ```
+   python crear_graficos_consenso.py
+   ```
+   Crea `<año>/<mes>/<fecha>/Consenso_<cuenca>.html` (un archivo por cuenca con datos). Se abren con doble clic
+   en el navegador; no necesitan internet. Se pueden compartir copiando la carpeta de la corrida a SharePoint.
+3. **Cada evaluador** abre el HTML de la cuenca, escribe sus **iniciales** (deben estar en `Evaluadores_Tecnicos`; si no,
+   el resto de controles queda bloqueado), el **No de evaluación** (1 = primera ronda; 2, 3... si vuelve a votar tras la
+   discusión) y completa los cuadros naranja por semana **o** el "Esperado el resto del mes" (se copia a todas las
+   semanas; si luego edita una semana, el esperado se recalcula). Pulsa **GUARDAR**: se descarga un archivo
+   `voto_*.json` que debe dejar en la carpeta `votos/` de la corrida.
+   - *Real a la fecha*: promedio de los aportes con dato del mes del inicio del pronóstico (vacío si aún no hay datos).
+   - *Esperado resto del mes*: promedio de las semanas ponderado por sus días (las fechas salen de `Fechas`).
+   - *Cierre del mes*: promedio de todos los días del mes (observados + pronosticados).
+4. **Registrar y consolidar** (una sola corrida, con `Consenso.xlsx` cerrado):
+   ```
+   python consolidar_votos.py            # todas las rondas existentes
+   python consolidar_votos.py --ronda 2  # solo una ronda
+   ```
+   Agrega cada voto nuevo a `Consenso.xlsx > Registros` (columnas `Mes_pronostico` e `Id_voto` al final; no duplica si se
+   vuelve a correr) y genera `consolidacion/Consolidacion_<cuenca>_Ronda<N>.html`: una línea por evaluador, y botones
+   **Media / Mediana / Rango** para "resto del mes" y "cierre". En la ronda N cada evaluador cuenta con su voto más
+   reciente de ronda <= N (si no volvió a votar, se mantiene su voto anterior). Todas las votaciones quedan en `Registros`.
+
+Notas: al guardar, `Consenso.xlsx` pierde los valores calculados guardados de sus fórmulas (Excel los recalcula al abrirlo);
+los scripts evalúan las fórmulas de `Fechas` por su cuenta. Los votos con evaluador no autorizado, mes distinto o datos
+inválidos se rechazan y se anotan en el log.
+
+## Solo seguimiento (`graficar_aportes.py`)
 ```
-pip install -r requirements.txt
 python graficar_aportes.py
 ```
+Genera `salida/` con un HTML por cuenca y `index.html`.
 
-## Reglas
+## Reglas de los gráficos
 - Cada columna de `Aportes %MH` (salvo `Fecha`) es una cuenca; sin datos -> no se grafica. Cuencas nuevas se detectan solas.
 - Fechas: hoja `parámetros`, col. B, solo si col. C = "si" (inicio y fin por separado; si solo una está activa, la otra toma el valor por defecto). Si ninguna está activa: última fecha con datos y 30 días atrás. Si están activas pero son inconsistentes (ilegibles, inicio > fin o sin datos en el rango) se usa el último mes de información y se registra una advertencia en el log.
 - Drivers: orden de la hoja `Prioridad`; `Remover`=si excluye, `no` incluye, vacío -> decide `Incluir` día a día.
@@ -60,3 +94,6 @@ python graficar_aportes.py
 - Color por `Impacto Estimado`: >1 azul, <1 ocre (más intenso a mayor diferencia), =1 o vacío gris. Texto = `Nota`. El hover de cada barra muestra variable, fechas, nota, impacto, lugar y los `comentarios` de `Driver_Clim`.
 - Días consecutivos con misma variable, nota e impacto se unifican en una barra.
 - Ambos paneles comparten el eje de fechas: cada dato diario de aportes se dibuja al centro de la columna de su día, igual que las barras.
+- Pronóstico: filas de `Pronostico_Drivers.xlsx` con las mismas reglas. Misma variable = misma fila (seguimiento a la izquierda,
+  pronóstico a la derecha), en el orden de `Prioridad` de `Seguimiento_Drivers.xlsx`; las variables que solo existan en el pronóstico
+  van al final según la prioridad del pronóstico.

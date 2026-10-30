@@ -1,4 +1,7 @@
 __pycache__/
 salida/
+# carpetas generadas <año>/<mes>/<fecha>/
+20[0-9][0-9]/
 # El .gitignore de la raíz ignora logs/; aquí se conserva la bitácora de auditoría
 !logs/
+logs/backups/
