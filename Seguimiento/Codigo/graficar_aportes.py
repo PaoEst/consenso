@@ -44,7 +44,8 @@ from plotly.subplots import make_subplots
 # --------------------------------------------------------------------------
 # Configuración
 # --------------------------------------------------------------------------
-BASE = Path(__file__).resolve().parent  # carpeta del proyecto (Excel, salida y logs)
+BASE = Path(__file__).resolve().parent          # carpeta del código (scripts, Excel de entrada, logs)
+SALIDAS = BASE.parent / "Salidas"                 # resultados: Salidas/<año>/<mes>/<fecha>/
 ARCHIVO_APORTES = "Seguimiento_Aportes.xlsx"
 ARCHIVO_DRIVERS = "Seguimiento_Drivers.xlsx"
 HOJA_APORTES = "Aportes %MH"
@@ -355,15 +356,26 @@ def relleno_media(x, y, ref=100.0):
     return xs, [max(v, ref) for v in ys], [min(v, ref) for v in ys]
 
 
-def texto_comentarios(coment: list) -> str:
-    """Comentarios de una barra para el hover: uno solo si es igual todos los días; si no, por día."""
+def texto_comentarios(coment: list, ini=None, fin=None) -> str:
+    """Comentarios de una barra para el hover. Los días consecutivos con el mismo comentario
+    se unifican: 'dd Mmm – dd Mmm: texto'. Si un solo comentario cubre toda la barra se
+    muestra sin fechas."""
     if not coment:
         return ""
-    unicos = list(dict.fromkeys(c for _, c in coment))
-    envolver = lambda t: "<br>".join(textwrap.wrap(html.escape(t), 60))
-    if len(unicos) == 1:
-        return "<br>Comentarios: " + envolver(unicos[0])
-    return "<br>Comentarios:<br>" + "<br>".join(envolver(f"{f:%d %b}: {c}") for f, c in coment)
+    grupos = []  # [fecha_ini, fecha_fin, texto]
+    for f, c in sorted(coment, key=lambda x: x[0]):
+        if grupos and grupos[-1][2] == c and f - grupos[-1][1] <= pd.Timedelta(days=1):
+            grupos[-1][1] = f
+        else:
+            grupos.append([f, f, c])
+    envolver = lambda t: "<br>".join(textwrap.wrap(html.escape(t), 55))
+    if len(grupos) == 1 and (ini is None or (grupos[0][0] <= ini and grupos[0][1] >= fin)):
+        return "<br>Comentarios: " + envolver(grupos[0][2])
+    lineas = []
+    for gi, gf, t in grupos:
+        rango = f"{gi:%d %b}" if gi == gf else f"{gi:%d %b} – {gf:%d %b}"
+        lineas.append(envolver(f"{rango}: {t}"))
+    return "<br>Comentarios:<br>" + "<br>".join(lineas)
 
 
 def construir_figura(cuenca: str, serie: pd.DataFrame, seg: pd.DataFrame,
@@ -409,7 +421,7 @@ def construir_figura(cuenca: str, serie: pd.DataFrame, seg: pd.DataFrame,
                  f"{r['ini']:%d %b} – {r['fin']:%d %b %Y} ({dias} d)<br>"
                  f"Nota: {html.escape(r['nota']) or '—'}<br>"
                  f"Impacto estimado: {imp}<br>Lugar: {html.escape(str(r['lugar']))}"
-                 + texto_comentarios(r["coment"]))
+                 + texto_comentarios(r["coment"], r["ini"], r["fin"]))
         fig.add_trace(go.Scatter(
             x=[r["ini"], fin_b, fin_b, r["ini"], r["ini"]],
             y=[yc - h, yc - h, yc + h, yc + h, yc - h], mode="lines", fill="toself",
@@ -460,7 +472,7 @@ def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--aportes", default=BASE / ARCHIVO_APORTES, type=Path)
     ap.add_argument("--drivers", default=BASE / ARCHIVO_DRIVERS, type=Path)
-    ap.add_argument("--salida", default=BASE / "salida", type=Path)
+    ap.add_argument("--salida", default=SALIDAS / "Solo_seguimiento", type=Path)
     ap.add_argument("--logs", default=BASE / "logs", type=Path)
     args = ap.parse_args()
 

@@ -36,55 +36,16 @@ import plotly
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 
-from consenso_comun import (ARCHIVO_CONSENSO, ARCHIVO_PRONOSTICO, BASE, carpeta_corrida,
-                            etiqueta_semana_corta, leer_evaluadores, leer_fechas, plotly_js)
+from consenso_comun import (ARCHIVO_CONSENSO, ARCHIVO_PRONOSTICO, BASE, CARPETA_CONSOLIDADO,
+                            ESTILO_NAV, SALIDAS, agregar_barras_drivers, altura_panel_drivers,
+                            barra_navegacion, cargar_drivers, carpeta_corrida, drivers_combinados,
+                            escribir_indice, etiqueta_semana_corta, leer_evaluadores, leer_fechas,
+                            plotly_js, real_a_la_fecha, registrar_cuenca)
 from graficar_aportes import (ARCHIVO_APORTES, ARCHIVO_DRIVERS, C_ABAJO, C_ARRIBA, C_LINEA,
-                              AZUL, NEUTRO, OCRE, configurar_logging, color_impacto,
-                              definir_ventana, drivers_de_cuenca, leer_aportes, leer_drivers,
-                              leer_prioridad, log, mezcla, nombre_archivo, norm, relleno_media,
-                              segmentos, sha256, texto_comentarios)
+                              configurar_logging, definir_ventana, leer_aportes, log,
+                              nombre_archivo, relleno_media, sha256)
 
 C_PRONOSTICO = "#1f5f8b"
-
-
-# --------------------------------------------------------------------------
-# Datos
-# --------------------------------------------------------------------------
-def hoja_prioridad(ruta: Path) -> str:
-    """Nombre de la hoja de prioridad (tolera 'Prioridad' y el typo 'Priodidad')."""
-    for h in pd.ExcelFile(ruta).sheet_names:
-        if norm(h).startswith("prio"):
-            return h
-    raise ValueError(f"{ruta.name}: no se encontró una hoja de prioridad")
-
-
-def drivers_combinados(cuenca, drv_seg, pri_seg, drv_pro, pri_pro, ini, fin) -> pd.DataFrame:
-    """Barras de seguimiento y de pronóstico para una cuenca, con columna 'origen'."""
-    sel_seg = drivers_de_cuenca(drv_seg, pri_seg, cuenca, ini, fin)
-    sel_pro = drivers_de_cuenca(drv_pro, pri_pro, cuenca, ini, fin)
-    if len(sel_seg) and len(sel_pro):  # si un día de una variable está en ambos, gana el seguimiento
-        ya = set(zip(sel_seg["clave"], sel_seg["Fecha"]))
-        dup = [(k, f) in ya for k, f in zip(sel_pro["clave"], sel_pro["Fecha"])]
-        if any(dup):
-            log.warning("%s: %d filas de pronóstico coinciden con días de seguimiento; se omiten",
-                        cuenca, sum(dup))
-        sel_pro = sel_pro[[not d for d in dup]]
-    partes = []
-    for sel, origen in ((sel_seg, "Seguimiento"), (sel_pro, "Pronóstico")):
-        s = segmentos(sel)
-        s["origen"] = origen
-        partes.append(s)
-    return pd.concat(partes, ignore_index=True)
-
-
-def hover_barra(r) -> str:
-    imp = "s/d" if pd.isna(r["impacto"]) else f"{r['impacto']:g}"
-    dias = (r["fin"] - r["ini"]).days + 1
-    return (f"<b>{html.escape(r['Variable'])}</b> ({r['origen']})<br>"
-            f"{r['ini']:%d %b} – {r['fin']:%d %b %Y} ({dias} d)<br>"
-            f"Nota: {html.escape(r['nota']) or '—'}<br>"
-            f"Impacto estimado: {imp}<br>Lugar: {html.escape(str(r['lugar']))}"
-            + texto_comentarios(r["coment"]))
 
 
 # --------------------------------------------------------------------------
@@ -94,8 +55,8 @@ def construir_figura(cuenca, serie, seg, orden_vars, ini, fechas):
     hor_ini, hor_fin = fechas["hor_ini"], fechas["hor_fin"]
     x_fin = hor_fin + pd.Timedelta(days=1)
     n = max(len(orden_vars), 1)
-    alto_drv = 28 * n + 40
-    alto_tot = int(400 + alto_drv + 110)
+    alto_drv = altura_panel_drivers(n)
+    alto_tot = int(400 + alto_drv + 100)
     frac = min(0.62, max(0.25, alto_drv / alto_tot))
     fig = make_subplots(rows=2, cols=1, shared_xaxes=True, vertical_spacing=0.04,
                         row_heights=[1 - frac, frac])
@@ -127,32 +88,8 @@ def construir_figura(cuenca, serie, seg, orden_vars, ini, fechas):
                              textposition="top center",
                              textfont=dict(color=C_PRONOSTICO, size=12)), row=1, col=1)
 
-    # Barras de drivers
-    pos = {v: i for i, v in enumerate(orden_vars)}
-    h = 0.36
-    cx, cy, ct = [], [], []
-    for _, r in seg.iterrows():
-        yc = pos[r["Variable"]]
-        fin_b = r["fin"] + pd.Timedelta(days=1)
-        fig.add_trace(go.Scatter(
-            x=[r["ini"], fin_b, fin_b, r["ini"], r["ini"]],
-            y=[yc - h, yc - h, yc + h, yc + h, yc - h], mode="lines", fill="toself",
-            fillcolor=color_impacto(r["impacto"])[0], line=dict(color="white", width=1.5),
-            hoveron="fills", text=hover_barra(r), hoverinfo="text", showlegend=False),
-            row=2, col=1)
-        if r["nota"]:
-            cx.append(r["ini"] + (fin_b - r["ini"]) / 2)
-            cy.append(yc)
-            ct.append(r["nota"])
-    if ct:
-        fig.add_trace(go.Scatter(x=cx, y=cy, mode="text", text=ct, hoverinfo="skip",
-                                 textfont=dict(color="white", size=11), showlegend=False),
-                      row=2, col=1)
-    for nombre, col in (("Favorece humedad", mezcla(*AZUL, 0.8)),
-                        ("Favorece condiciones secas", mezcla(*OCRE, 0.8)),
-                        ("Presente, efecto neutro/incierto", NEUTRO)):
-        fig.add_trace(go.Scatter(x=[None], y=[None], mode="markers", name=nombre,
-                                 marker=dict(color=col, size=12, symbol="square")), row=2, col=1)
+    # Barras de drivers (una fila por variable; seguimiento a la izquierda, pronóstico a la derecha)
+    agregar_barras_drivers(fig, seg, orden_vars, row=2)
 
     # Separación seguimiento / pronóstico y semanas
     formas = [dict(type="rect", xref="x", yref="paper", x0=hor_ini, x1=x_fin, y0=0, y1=1,
@@ -173,9 +110,6 @@ def construir_figura(cuenca, serie, seg, orden_vars, ini, fechas):
     rango = [ini, x_fin]
     fig.update_yaxes(title_text="Aportes (% de la media)", row=1, col=1, gridcolor="#e6e6e6",
                      zeroline=False, rangemode="tozero")
-    fig.update_yaxes(tickmode="array", tickvals=list(range(len(orden_vars))), ticktext=orden_vars,
-                     range=[len(orden_vars) - 0.4, -0.6], row=2, col=1, gridcolor="#efefef",
-                     tickfont=dict(size=11), automargin=True)
     for fila in (1, 2):
         fig.update_xaxes(range=rango, matches="x" if fila == 2 else None, gridcolor="#e6e6e6",
                          showspikes=True, spikemode="across", spikethickness=1,
@@ -183,7 +117,7 @@ def construir_figura(cuenca, serie, seg, orden_vars, ini, fechas):
     fig.update_layout(
         height=alto_tot, template="plotly_white", hovermode="closest", shapes=formas,
         annotations=list(fig.layout.annotations) + anot, hoverlabel=dict(align="left"),
-        margin=dict(l=220, r=20, t=40, b=60), plot_bgcolor="#fbfbf9",
+        margin=dict(l=20, r=20, t=40, b=60), plot_bgcolor="#fbfbf9",
         legend=dict(orientation="h", x=0.5, xanchor="center", y=-0.1))
     return fig, idx_linea, idx_texto
 
@@ -195,6 +129,7 @@ PLANTILLA = r"""<!doctype html>
 <html lang="es"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>__TITULO_PAGINA__</title>
+__ESTILO_NAV__
 <style>
 :root{--naranja:#e8742a;--azul:#1f5f8b;--txt:#1d2733;--sub:#5b6773;--bg:#ffffff;--card:#f6f7f9;--brd:#d9dde3}
 @media (prefers-color-scheme: dark){:root{--txt:#e8ecf1;--sub:#a3adb8;--bg:#161b22;--card:#1f262f;--brd:#34404d}}
@@ -210,15 +145,16 @@ input:disabled{border-color:var(--brd);background:var(--card);cursor:not-allowed
 #main{display:flex;gap:16px;padding:10px 20px 20px}
 #izq{flex:1 1 auto;min-width:0} #der{flex:0 0 220px;display:flex;flex-direction:column;gap:12px;padding-top:70px}
 #semrow{position:relative;height:74px}
-.sem{position:absolute;top:0;text-align:center;font-size:12px;color:var(--sub);transform:translateX(-50%)}
+.sem{position:absolute;top:0;width:58px;text-align:center;font-size:11px;line-height:1.25;color:var(--sub);transform:translateX(-50%)}
 .sem b{display:block;color:var(--txt);font-size:13px}
-.sem input{width:100%;margin-top:4px}
+.sem input{width:58px;margin-top:4px;padding:6px 2px}
 .card{background:var(--card);border:1px solid var(--brd);border-radius:8px;padding:10px 12px;font-size:13px;color:var(--sub)}
 .card input{width:100%;margin-top:6px;font-size:16px}
 .valor{margin-top:6px;border:2px solid var(--brd);border-radius:6px;padding:6px;text-align:center;font-size:16px;color:var(--txt);background:var(--bg);min-height:36px}
 #msg{font-size:13px;min-height:20px} .ok{color:#1a7f37}.err{color:#d62728}
 </style>
 <script>__PLOTLYJS__</script></head><body>
+__NAV__
 <header>
  <h1>__TITULO__</h1>
  <div class="campo">Iniciales Evaluador Técnico <input id="ini" type="text" maxlength="6" autocomplete="off" placeholder="p. ej. PE"><span id="evname"></span></div>
@@ -228,7 +164,7 @@ input:disabled{border-color:var(--brd);background:var(--card);cursor:not-allowed
 <div id="main">
  <div id="izq"><div id="semrow"></div><div id="grafico">__GRAFICO__</div></div>
  <aside id="der">
-  <div class="card">Real a la fecha<div class="valor" id="real">—</div></div>
+  <div class="card">Real a la fecha (%)<div class="valor" id="real">—</div></div>
   <div class="card">Esperado el resto del mes (%)<input id="resto" type="number" min="0" step="any" disabled></div>
   <div class="card">Cierre del mes (%)<div class="valor" id="cierre">—</div></div>
   <div id="msg"></div>
@@ -253,12 +189,14 @@ D.semanas.forEach(s => {
 });
 function posicionar(){
   const xa = gd._fullLayout && gd._fullLayout.xaxis; if(!xa || !xa._length) return;
-  const ancho = $('semrow').getBoundingClientRect().width;
+  const SEP = 68;               // separación mínima entre centros de cajones (px)
+  let previo = -1e9;
   D.semanas.forEach(s => {
     const div = document.querySelector('.sem[data-n="'+s.n+'"]');
     const a = xa._offset + xa.d2p(s.ini_ms), b = xa._offset + xa.d2p(s.fin_ms + DAY);
-    div.style.left = ((a+b)/2) + 'px';
-    div.style.width = Math.max(74, Math.min(96, (b-a)-6)) + 'px';
+    const centro = Math.max((a+b)/2, previo + SEP);   // si dos semanas quedan muy juntas, se corre la siguiente
+    previo = centro;
+    div.style.left = centro + 'px';
     div.style.display = (b<xa._offset || a>xa._offset+xa._length) ? 'none' : '';
   });
 }
@@ -269,7 +207,7 @@ window.addEventListener('load', () => setTimeout(() => Plotly.Plots.resize(gd), 
 (function esperar(){ if(gd._fullLayout && gd._fullLayout.xaxis && gd._fullLayout.xaxis._length) posicionar(); else setTimeout(esperar, 60); })();
 
 // ---- cálculos
-$('real').textContent = D.real.mean===null ? '—' : fmt(D.real.mean) + ' %';
+$('real').textContent = D.real.mean===null ? '—' : fmt(D.real.mean);
 function valoresSemanas(){ return semInputs.map(i => num(i.value)); }
 function recalcular(origen){
   if(origen==='resto'){
@@ -282,7 +220,7 @@ function recalcular(origen){
   if(origen!=='resto') $('resto').value = sd>0 ? fmt(sw/sd) : '';
   if(completas && sd>0){
     const cierre = (D.real.suma + sw) / (D.real.n + sd);
-    $('cierre').textContent = fmt(cierre) + ' %';
+    $('cierre').textContent = fmt(cierre);
   } else $('cierre').textContent = '—';
   dibujar(v);
 }
@@ -349,6 +287,8 @@ def js_seguro(obj) -> str:
 
 def escribir_html(ruta: Path, cuenca: str, fig, idx_linea, idx_texto, fechas, evaluadores,
                   obs: list[float], carpeta: Path) -> None:
+    archivo = nombre_archivo(cuenca)
+    registrar_cuenca(carpeta, archivo, cuenca)
     ms = lambda f: int(f.timestamp() * 1000)  # f es medianoche local-naive; plotly lo trata igual
     semanas = [{"n": s["n"], "dias": s["dias"], "ini_ms": ms(s["ini"]), "fin_ms": ms(s["fin"]),
                 "etiqueta": etiqueta_semana_corta(s)}
@@ -367,6 +307,8 @@ def escribir_html(ruta: Path, cuenca: str, fig, idx_linea, idx_texto, fechas, ev
                       config={"displaylogo": False, "responsive": True})
     pagina = (PLANTILLA.replace("__TITULO_PAGINA__", html.escape(f"Consenso - {cuenca}"))
               .replace("__TITULO__", html.escape(titulo))
+              .replace("__ESTILO_NAV__", ESTILO_NAV)
+              .replace("__NAV__", "<!--NAV:%s-->" % archivo)
               .replace("__DATOS__", js_seguro(datos))
               .replace("__GRAFICO__", div)
               .replace("__PLOTLYJS__", plotly_js()))
@@ -382,7 +324,7 @@ def main() -> int:
     ap.add_argument("--drivers", default=BASE / ARCHIVO_DRIVERS, type=Path)
     ap.add_argument("--pronostico", default=BASE / ARCHIVO_PRONOSTICO, type=Path)
     ap.add_argument("--consenso", default=BASE / ARCHIVO_CONSENSO, type=Path)
-    ap.add_argument("--salida", default=BASE, type=Path, help="carpeta donde se crea año/mes/fecha")
+    ap.add_argument("--salida", default=SALIDAS, type=Path, help="carpeta donde se crea año/mes/fecha")
     ap.add_argument("--logs", default=BASE / "logs", type=Path)
     ap.add_argument("--fecha-corrida", default=None, help="AAAA-MM-DD (por defecto: fecha de realización del consenso)")
     args = ap.parse_args()
@@ -415,38 +357,15 @@ def main() -> int:
                         ini.date(), fechas["hor_ini"].date())
             ini = fechas["hor_ini"] - pd.Timedelta(days=30)
 
-        pri_seg = leer_prioridad(args.drivers)
-        drv_seg = leer_drivers(args.drivers, pri_seg)
-        pri_pro = leer_prioridad(args.pronostico, hoja_prioridad(args.pronostico))
-        drv_pro = leer_drivers(args.pronostico, pri_pro)
-
-        # Orden de filas: prioridad del seguimiento; luego las variables solo del pronóstico
-        # (prioridad del pronóstico); por último cualquier variable no listada en ninguna.
-        orden = list(pri_seg["Variable"])
-        conocidas = set(pri_seg["clave"])
-        for k, v in zip(pri_pro["clave"], pri_pro["Variable"]):
-            if k not in conocidas:
-                orden.append(v)
-                conocidas.add(k)
-        for df in (drv_seg, drv_pro):
-            for k, v in df.drop_duplicates("clave")[["clave", "Variable"]].values:
-                if k and k not in conocidas:
-                    orden.append(str(v).strip())
-                    conocidas.add(k)
-        nombre_de = {}
-        for v in orden:
-            nombre_de.setdefault(norm(v), v)
-        solo_pro = [v for v in orden if norm(v) not in set(pri_seg["clave"])]
-        log.info("Variables solo del pronóstico (al final): %s", solo_pro)
+        ctx = cargar_drivers(args.drivers, args.pronostico)
 
         fecha_corrida = (pd.Timestamp(args.fecha_corrida).normalize() if args.fecha_corrida
                          else fechas["consenso"])
         carpeta = carpeta_corrida(args.salida, fecha_corrida)
         (carpeta / "votos").mkdir(parents=True, exist_ok=True)
-        (carpeta / "consolidacion").mkdir(exist_ok=True)
+        (carpeta / CARPETA_CONSOLIDADO).mkdir(exist_ok=True)
         log.info("Carpeta de corrida: %s", carpeta.resolve())
 
-        mes_ini = fechas["hor_ini"]
         generados, omitidos = [], []
         for cuenca in [c for c in aportes.columns if c != "Fecha"]:
             col = aportes[cuenca]
@@ -461,16 +380,8 @@ def main() -> int:
                 omitidos.append((cuenca, "sin datos en la ventana"))
                 continue
 
-            seg = drivers_combinados(cuenca, drv_seg, pri_seg, drv_pro, pri_pro, ini, fechas["hor_fin"])
-            if len(seg):
-                seg["Variable"] = seg["clave"].map(lambda k: nombre_de.get(k, k))
-            presentes = set(seg["clave"])
-            orden_vars = [v for v in orden if norm(v) in presentes]
-
-            # Real a la fecha: solo el mes del inicio del horizonte, solo días anteriores al horizonte
-            m = aportes[(aportes["Fecha"].dt.year == mes_ini.year) & (aportes["Fecha"].dt.month == mes_ini.month)
-                        & (aportes["Fecha"] < mes_ini)][cuenca].dropna()
-            obs = [float(v) for v in m]
+            seg, orden_vars = drivers_combinados(cuenca, ctx, ini, fechas["hor_fin"])
+            obs = real_a_la_fecha(aportes, cuenca, fechas["hor_ini"])
 
             fig, il, it = construir_figura(cuenca, serie, seg, orden_vars, ini, fechas)
             ruta = carpeta / f"Consenso_{nombre_archivo(cuenca)}.html"
@@ -487,6 +398,14 @@ def main() -> int:
                 log.debug("  barra | %s | %s | %s -> %s | nota=%r | impacto=%s | lugar=%s",
                           r["origen"], r["Variable"], r["ini"].date(), r["fin"].date(), r["nota"],
                           r["impacto"], r["lugar"])
+
+        # barra de navegación (índice + selector de cuenca) ahora que se conocen todas las cuencas
+        for archivo in [nombre_archivo(c) for c, _ in generados]:
+            ruta = carpeta / f"Consenso_{archivo}.html"
+            txt = ruta.read_text(encoding="utf-8")
+            ruta.write_text(txt.replace("<!--NAV:%s-->" % archivo,
+                                        barra_navegacion(carpeta, archivo, "votacion")), encoding="utf-8")
+        escribir_indice(carpeta, fechas)
 
         log.info("RESUMEN: generados=%d %s | omitidos=%d %s", len(generados),
                  [c for c, _ in generados], len(omitidos), omitidos)

@@ -1,7 +1,6 @@
 __pycache__/
-salida/
-# carpetas generadas <año>/<mes>/<fecha>/
-20[0-9][0-9]/
+# resultados generados (se comparten por SharePoint, no van al repositorio)
+Salidas/
 # El .gitignore de la raíz ignora logs/; aquí se conserva la bitácora de auditoría
 !logs/
-logs/backups/
+Codigo/logs/backups/
