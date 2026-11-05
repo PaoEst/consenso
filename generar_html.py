@@ -11,6 +11,8 @@ Distribución de la página:
   - Un título central por cada Variable (en el orden de la tabla).
   - Columna izquierda: filas con Carpeta = Seguimiento.
   - Columna derecha:   filas con Carpeta = Pronostico o Seguim_Pronos.
+  - Si una Variable tiene un solo tipo de información, sus mapas van en UNA columna centrada con el
+    título que corresponde: Seguimiento, Pronóstico o Seguimiento-Pronóstico.
   - El título de cada mapa es la columna Insumo. Solo se incluyen filas con Descargar = "si".
 """
 import argparse  # Para leer los argumentos de la línea de comandos
@@ -33,6 +35,7 @@ import descargar_imagenes as di  # Reutiliza las funciones del script de descarg
 BASE = Path(__file__).resolve().parent  # Carpeta donde vive este script (rutas por defecto)
 TITULO = "Seguimiento Drivers Climáticos"  # Título principal de la página
 IZQUIERDA = {"seguimiento"}  # Valores de Carpeta que van en la columna izquierda
+ETIQUETAS = {"seguimiento": "Seguimiento", "pronostico": "Pronóstico", "pronóstico": "Pronóstico", "seguim_pronos": "Seguimiento-Pronóstico"}  # Título que corresponde a cada tipo de Carpeta
 DERECHA = {"pronostico", "pronóstico", "seguim_pronos"}  # Valores de Carpeta que van en la columna derecha (junto a los pronósticos)
 
 CSS = """
@@ -52,7 +55,7 @@ figure h3{margin:0 0 8px;font-size:1rem}
 figure img{display:block;width:80%;max-width:560px;height:auto;margin:0 auto}
 .nota{margin-top:6px;font-size:.8rem;color:var(--warn)}
 .fallo{padding:24px 12px;text-align:center;color:var(--warn);border:1px dashed var(--warn);border-radius:6px}
-.vacio{text-align:center;color:var(--sub)}
+.cols.uno{grid-template-columns:minmax(0,640px);justify-content:center}
 @media (max-width:900px){.cols{grid-template-columns:1fr}}
 """  # Estilos de la página (claro/oscuro; en pantallas angostas las columnas se apilan)
 
@@ -119,17 +122,23 @@ def figura(f, img, hoy) -> str:  # Construye el bloque HTML de un mapa (título 
 
 
 def columna(nombre: str, figuras: list) -> str:  # Construye una columna (izquierda o derecha) de una Variable
-    contenido = "".join(figuras) if figuras else '<p class="vacio">—</p>'  # Los mapas, o un guion si no hay ninguno
+    contenido = "".join(figuras)  # Los mapas de la columna, uno debajo de otro
     return f'<div class="col"><h4>{nombre}</h4>{contenido}</div>'  # Columna con su encabezado pequeño
 
 
 def construir_html(grupos: dict, hoy: date, generado: datetime) -> str:  # Arma la página completa
     secciones = []  # Lista de secciones (una por Variable)
     for variable, lados in grupos.items():  # Recorre las Variables en el orden de la tabla
-        secciones.append(  # Agrega la sección de esta Variable
-            f"<section><h2>{html.escape(variable)}</h2><div class=\"cols\">"  # Título central de la Variable
-            f"{columna('Seguimiento', lados['izq'])}{columna('Pronóstico', lados['der'])}"  # Izquierda y derecha
-            "</div></section>")
+        if lados["izq"] and lados["der"]:  # Hay seguimiento y pronóstico: dos columnas
+            cols = f'<div class="cols">{columna("Seguimiento", lados["izq"])}{columna("Pronóstico", lados["der"])}</div>'  # Izquierda y derecha
+        else:  # Un solo tipo de información: una columna centrada
+            lado = "izq" if lados["izq"] else "der"  # Lado que tiene los mapas
+            if len(lados["tipos"]) == 1:  # Un único tipo (Seguimiento, Pronostico o Seguim_Pronos)...
+                titulo = ETIQUETAS.get(next(iter(lados["tipos"])), "Pronóstico")  # ...su título correspondiente
+            else:  # Varios tipos del mismo lado...
+                titulo = "Seguimiento" if lado == "izq" else "Pronóstico"  # ...título genérico del lado
+            cols = f'<div class="cols uno">{columna(titulo, lados[lado])}</div>'  # Una sola columna centrada
+        secciones.append(f"<section><h2>{html.escape(variable)}</h2>{cols}</section>")  # Sección con el título central de la Variable
     return (  # Documento HTML completo
         '<!DOCTYPE html><html lang="es"><head><meta charset="utf-8">'  # Cabecera: codificación UTF-8
         '<meta name="viewport" content="width=device-width,initial-scale=1">'  # Adaptable a celulares
@@ -184,8 +193,9 @@ def main():  # Función principal del programa
             continue  # Pasa a la siguiente fila
         img = obtener_imagen(f, hoy, a, audit, base)  # Obtiene la imagen (con retroceso, reintentos y validación)
         cuentas["ok" if img["ok"] else "error"] += 1  # Suma al contador correspondiente
-        lados = grupos.setdefault(f["variable"], {"izq": [], "der": []})  # Crea la Variable si es la primera vez que aparece
+        lados = grupos.setdefault(f["variable"], {"izq": [], "der": [], "tipos": set()})  # Crea la Variable si es la primera vez que aparece
         lados[lado_de(f["carpeta"])].append(figura(f, img, hoy))  # Agrega el mapa a la columna que le corresponde
+        lados["tipos"].add(di.norm(f["carpeta"]))  # Recuerda qué tipos de información tiene la Variable
 
     destino = a.salida / f"Seguimiento_Drivers_Climaticos_{hoy:%Y%m%d}.html"  # Ruta del HTML de salida
     pagina = construir_html(grupos, hoy, datetime.now()).encode("utf-8")  # Página completa en bytes UTF-8
