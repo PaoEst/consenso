@@ -28,3 +28,17 @@ Código de salida 0 si todo fue bien, 1 si alguna imagen falló.
 
 - Linux/macOS (cron, 07:00): `0 7 * * * cd /ruta/repo && /usr/bin/python3 descargar_imagenes.py`
 - Windows: Programador de tareas → acción `python.exe` con argumento `descargar_imagenes.py` y "Iniciar en" la carpeta del repo.
+
+## HTML "Seguimiento Drivers Climáticos" (`generar_html.py`)
+
+Genera un único archivo HTML con **todas las imágenes incrustadas** (no depende de internet para verse y se puede enviar por correo):
+
+    python generar_html.py                 # hoy
+    python generar_html.py --fecha 2026-11-05
+    # salida: informes/Seguimiento_Drivers_Climaticos_<YYYYMMDD>.html (se sobrescribe si ya existe)
+
+- Un título central por cada `Variable` (en el orden de la tabla).
+- **Izquierda:** filas con `Carpeta` = `Seguimiento` o `Seguim_Pronos`. **Derecha:** filas con `Carpeta` = `Pronostico`.
+- El título de cada mapa es la columna `Insumo`. Solo se incluyen filas con `Descargar` = `si`.
+- Mismas reglas de consulta que `descargar_imagenes.py` (fecha de hoy en las URL `variable`, retroceso de días con 404, reintentos, validación de imagen) y mismos logs en `logs/`. Si una imagen falla, la página muestra "Imagen no disponible" con el motivo y el script termina con código 1.
+- Es independiente de las descargas: no guarda las imágenes en carpetas. El archivo pesa varios MB (las imágenes van dentro).
