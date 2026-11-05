@@ -38,7 +38,7 @@ Genera un único archivo HTML con **todas las imágenes incrustadas** (no depend
     # salida: informes/Seguimiento_Drivers_Climaticos_<YYYYMMDD>.html (se sobrescribe si ya existe)
 
 - Un título central por cada `Variable` (en el orden de la tabla).
-- **Izquierda:** filas con `Carpeta` = `Seguimiento` o `Seguim_Pronos`. **Derecha:** filas con `Carpeta` = `Pronostico`.
+- **Izquierda:** filas con `Carpeta` = `Seguimiento`. **Derecha:** filas con `Carpeta` = `Pronostico` o `Seguim_Pronos`.
 - El título de cada mapa es la columna `Insumo`. Solo se incluyen filas con `Descargar` = `si`.
 - Mismas reglas de consulta que `descargar_imagenes.py` (fecha de hoy en las URL `variable`, retroceso de días con 404, reintentos, validación de imagen) y mismos logs en `logs/`. Si una imagen falla, la página muestra "Imagen no disponible" con el motivo y el script termina con código 1.
 - Es independiente de las descargas: no guarda las imágenes en carpetas. El archivo pesa varios MB (las imágenes van dentro).

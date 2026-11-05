@@ -9,8 +9,8 @@ Salida:  <salida>/Seguimiento_Drivers_Climaticos_<YYYYMMDD>.html   (se sobrescri
 
 Distribución de la página:
   - Un título central por cada Variable (en el orden de la tabla).
-  - Columna izquierda: filas con Carpeta = Seguimiento o Seguim_Pronos.
-  - Columna derecha:   filas con Carpeta = Pronostico.
+  - Columna izquierda: filas con Carpeta = Seguimiento.
+  - Columna derecha:   filas con Carpeta = Pronostico o Seguim_Pronos.
   - El título de cada mapa es la columna Insumo. Solo se incluyen filas con Descargar = "si".
 """
 import argparse  # Para leer los argumentos de la línea de comandos
@@ -32,8 +32,8 @@ import descargar_imagenes as di  # Reutiliza las funciones del script de descarg
 
 BASE = Path(__file__).resolve().parent  # Carpeta donde vive este script (rutas por defecto)
 TITULO = "Seguimiento Drivers Climáticos"  # Título principal de la página
-IZQUIERDA = {"seguimiento", "seguim_pronos"}  # Valores de Carpeta que van en la columna izquierda
-DERECHA = {"pronostico", "pronóstico"}  # Valores de Carpeta que van en la columna derecha
+IZQUIERDA = {"seguimiento"}  # Valores de Carpeta que van en la columna izquierda
+DERECHA = {"pronostico", "pronóstico", "seguim_pronos"}  # Valores de Carpeta que van en la columna derecha (junto a los pronósticos)
 
 CSS = """
 :root{--bg:#f4f6f8;--card:#fff;--txt:#1d2733;--sub:#5b6b7b;--line:#d8dee4;--acc:#0b5cad;--warn:#b45309}
@@ -49,7 +49,7 @@ h2{text-align:center;margin:40px 0 12px;padding:10px 12px;background:var(--acc);
 .col h4{margin:0 0 8px;color:var(--sub);font-size:.85rem;text-transform:uppercase;letter-spacing:.06em;text-align:center}
 figure{margin:0 0 16px;padding:12px;background:var(--card);border:1px solid var(--line);border-radius:8px}
 figure h3{margin:0 0 8px;font-size:1rem}
-figure img{display:block;width:100%;height:auto}
+figure img{display:block;width:80%;max-width:560px;height:auto;margin:0 auto}
 .nota{margin-top:6px;font-size:.8rem;color:var(--warn)}
 .fallo{padding:24px 12px;text-align:center;color:var(--warn);border:1px dashed var(--warn);border-radius:6px}
 .vacio{text-align:center;color:var(--sub)}
@@ -59,7 +59,7 @@ figure img{display:block;width:100%;height:auto}
 
 def lado_de(carpeta: str) -> str:  # Decide en qué columna va una fila según su Carpeta
     n = di.norm(carpeta)  # Normaliza el texto (minúsculas, sin espacios extra)
-    if n in IZQUIERDA:  # Seguimiento o Seguim_Pronos...
+    if n in IZQUIERDA:  # Seguimiento...
         return "izq"  # ...van a la izquierda
     if n not in DERECHA:  # Si no es un valor conocido...
         di.log.warning("Carpeta desconocida %r: se coloca en la columna derecha", carpeta)  # ...se avisa en el log
