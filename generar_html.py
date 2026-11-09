@@ -13,6 +13,7 @@ Distribución de la página:
   - Columna derecha:   filas con Carpeta = Pronostico o Seguim_Pronos.
   - Si una Variable tiene un solo tipo de información, sus mapas van en UNA columna centrada con el
     título que corresponde: Seguimiento, Pronóstico o Seguimiento-Pronóstico.
+  - Al inicio hay un índice con un enlace a cada Variable; cada Variable y un botón flotante permiten volver al índice.
   - El título de cada mapa es la columna Insumo. Solo se incluyen filas con Descargar = "si".
 """
 import argparse  # Para leer los argumentos de la línea de comandos
@@ -23,9 +24,11 @@ import html  # Para escapar los textos de la tabla antes de ponerlos en el HTML
 import json  # Para escribir los registros de auditoría en formato JSON
 import logging  # Para el log de ejecución (archivo + pantalla)
 import platform  # Para registrar versión de Python y sistema operativo
+import re  # Para limpiar los nombres al crear identificadores de enlace
 import socket  # Para registrar el nombre del equipo (auditoría)
 import sys  # Para stdout y el código de salida del programa
 import urllib.error  # Excepciones HTTP/red de urllib
+import unicodedata  # Para quitar acentos al crear identificadores de enlace
 import uuid  # Para generar un identificador único por ejecución
 from datetime import date, datetime, timedelta, timezone  # Manejo de fechas y horas
 from pathlib import Path  # Manejo de rutas de forma portable
@@ -47,7 +50,10 @@ header{padding:28px 16px 8px;text-align:center}
 h1{margin:0;font-size:2rem}
 .meta{color:var(--sub);font-size:.9rem;margin-top:6px}
 main{max-width:1500px;margin:0 auto;padding:0 16px 40px}
-h2{text-align:center;margin:40px 0 12px;padding:10px 12px;background:var(--acc);color:#fff;border-radius:8px;font-size:1.4rem}
+html{scroll-behavior:smooth}
+@media (prefers-reduced-motion:reduce){html{scroll-behavior:auto}}
+section{scroll-margin-top:12px}
+h2{position:relative;text-align:center;margin:40px 0 12px;padding:10px 96px;background:var(--acc);color:#fff;border-radius:8px;font-size:1.4rem}
 .cols{display:grid;grid-template-columns:1fr 1fr;gap:16px;align-items:start}
 .col h4{margin:0 0 8px;color:var(--sub);font-size:.85rem;text-transform:uppercase;letter-spacing:.06em;text-align:center}
 figure{margin:0 0 16px;padding:12px;background:var(--card);border:1px solid var(--line);border-radius:8px}
@@ -55,9 +61,30 @@ figure h3{margin:0 0 8px;font-size:1rem}
 figure img{display:block;width:80%;max-width:560px;height:auto;margin:0 auto}
 .nota{margin-top:6px;font-size:.8rem;color:var(--warn)}
 .fallo{padding:24px 12px;text-align:center;color:var(--warn);border:1px dashed var(--warn);border-radius:6px}
+#indice{margin:20px 0 0;padding:14px 16px;background:var(--card);border:1px solid var(--line);border-radius:8px}
+#indice h2{all:unset;display:block;text-align:center;font-weight:700;font-size:1.1rem;margin-bottom:10px}
+#indice ul{list-style:none;margin:0;padding:0;display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:8px}
+#indice a{display:flex;justify-content:space-between;gap:8px;padding:8px 12px;border:1px solid var(--line);border-radius:6px;color:var(--acc);text-decoration:none;font-weight:600}
+#indice a:hover{background:var(--acc);color:#fff}
+#indice a span{color:var(--sub);font-weight:400}
+#indice a:hover span{color:#fff}
+.volver{position:absolute;right:12px;top:50%;transform:translateY(-50%);color:#fff;font-size:.8rem;font-weight:400;text-decoration:none;opacity:.9}
+.volver:hover{text-decoration:underline}
+.subir{position:fixed;right:16px;bottom:16px;padding:10px 14px;background:var(--acc);color:#fff;border-radius:999px;text-decoration:none;font-weight:600;box-shadow:0 2px 8px rgba(0,0,0,.3)}
+@media print{.subir,.volver{display:none}}
 .cols.uno{grid-template-columns:minmax(0,640px);justify-content:center}
-@media (max-width:900px){.cols{grid-template-columns:1fr}}
+@media (max-width:900px){.cols{grid-template-columns:1fr}h2{padding:10px 12px}.volver{position:static;display:block;transform:none;margin-top:4px}}
 """  # Estilos de la página (claro/oscuro; en pantallas angostas las columnas se apilan)
+
+
+def slug(texto: str, usados: set) -> str:  # Crea un identificador de enlace único a partir del nombre de una Variable
+    base = unicodedata.normalize("NFKD", texto).encode("ascii", "ignore").decode("ascii").lower()  # Quita acentos y pasa a minúsculas
+    base = "var-" + (re.sub(r"[^a-z0-9]+", "-", base).strip("-") or "sin-nombre")  # Solo letras, números y guiones, con prefijo "var-"
+    ident, n = base, 2  # Identificador candidato y contador para repetidos
+    while ident in usados:  # Si ya existe uno igual...
+        ident, n = f"{base}-{n}", n + 1  # ...se le agrega -2, -3, ...
+    usados.add(ident)  # Se registra como usado
+    return ident  # Identificador único
 
 
 def lado_de(carpeta: str) -> str:  # Decide en qué columna va una fila según su Carpeta
@@ -127,7 +154,7 @@ def columna(nombre: str, figuras: list) -> str:  # Construye una columna (izquie
 
 
 def construir_html(grupos: dict, hoy: date, generado: datetime) -> str:  # Arma la página completa
-    secciones = []  # Lista de secciones (una por Variable)
+    secciones, indice, usados = [], [], set()  # Secciones y entradas del índice (una por Variable) e identificadores ya usados
     for variable, lados in grupos.items():  # Recorre las Variables en el orden de la tabla
         if lados["izq"] and lados["der"]:  # Hay seguimiento y pronóstico: dos columnas
             cols = f'<div class="cols">{columna("Seguimiento", lados["izq"])}{columna("Pronóstico", lados["der"])}</div>'  # Izquierda y derecha
@@ -138,14 +165,19 @@ def construir_html(grupos: dict, hoy: date, generado: datetime) -> str:  # Arma 
             else:  # Varios tipos del mismo lado...
                 titulo = "Seguimiento" if lado == "izq" else "Pronóstico"  # ...título genérico del lado
             cols = f'<div class="cols uno">{columna(titulo, lados[lado])}</div>'  # Una sola columna centrada
-        secciones.append(f"<section><h2>{html.escape(variable)}</h2>{cols}</section>")  # Sección con el título central de la Variable
+        ident = slug(variable, usados)  # Identificador de enlace de esta Variable
+        total = len(lados["izq"]) + len(lados["der"])  # Cantidad de mapas de la Variable
+        indice.append(f'<li><a href="#{ident}">{html.escape(variable)}<span>{total}</span></a></li>')  # Entrada del índice
+        secciones.append(f'<section id="{ident}"><h2>{html.escape(variable)}<a class="volver" href="#indice">↑ Índice</a></h2>{cols}</section>')  # Sección con título central y enlace para volver
     return (  # Documento HTML completo
         '<!DOCTYPE html><html lang="es"><head><meta charset="utf-8">'  # Cabecera: codificación UTF-8
         '<meta name="viewport" content="width=device-width,initial-scale=1">'  # Adaptable a celulares
         f"<title>{TITULO}</title><style>{CSS}</style></head><body>"  # Título de la pestaña y estilos
         f"<header><h1>{TITULO}</h1>"  # Título principal
         f'<div class="meta">Información del {hoy:%d-%m-%Y} · generado el {generado:%d-%m-%Y %H:%M}</div></header>'  # Fecha y hora
-        f"<main>{''.join(secciones)}</main></body></html>")  # Contenido principal
+        f'<main><nav id="indice"><h2>Índice</h2><ul>{"".join(indice)}</ul></nav>'  # Índice con un enlace por Variable
+        f"{''.join(secciones)}</main>"  # Secciones de las Variables
+        '<a class="subir" href="#indice">↑ Índice</a></body></html>')  # Botón flotante para volver al índice
 
 
 def main():  # Función principal del programa
