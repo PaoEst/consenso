@@ -40,7 +40,7 @@ Genera un único archivo HTML con **todas las imágenes incrustadas** (no depend
 - Un título central por cada `Variable` (en el orden de la tabla).
 - **Izquierda:** filas con `Carpeta` = `Seguimiento`. **Derecha:** filas con `Carpeta` = `Pronostico` o `Seguim_Pronos`.
 - Si una Variable tiene **un solo tipo** de información, sus mapas van en una columna **centrada** con el título que corresponde: `Seguimiento`, `Pronóstico` o `Seguimiento-Pronóstico` (para `Seguim_Pronos`). Si tiene seguimiento y pronóstico, se muestran las dos columnas.
-- Al inicio hay un **índice** con un enlace a cada `Variable` (y cuántos mapas tiene). Cada Variable trae un enlace "↑ Índice" y hay un botón flotante para volver al índice desde cualquier punto. Todo funciona dentro del mismo archivo, sin internet.
+- Al inicio hay un **índice** con un enlace a cada `Variable`. Cada Variable trae un enlace "↑ Índice" y hay un botón flotante para volver al índice desde cualquier punto. Todo funciona dentro del mismo archivo, sin internet.
 - El título de cada mapa es la columna `Insumo`. Solo se incluyen filas con `Descargar` = `si`.
 - Mismas reglas de consulta que `descargar_imagenes.py` (fecha de hoy en las URL `variable`, retroceso de días con 404, reintentos, validación de imagen) y mismos logs en `logs/`. Si una imagen falla, la página muestra "Imagen no disponible" con el motivo y el script termina con código 1.
 - Es independiente de las descargas: no guarda las imágenes en carpetas. El archivo pesa varios MB (las imágenes van dentro).

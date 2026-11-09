@@ -57,17 +57,15 @@ h2{position:relative;text-align:center;margin:40px 0 12px;padding:10px 96px;back
 .cols{display:grid;grid-template-columns:1fr 1fr;gap:16px;align-items:start}
 .col h4{margin:0 0 8px;color:var(--sub);font-size:.85rem;text-transform:uppercase;letter-spacing:.06em;text-align:center}
 figure{margin:0 0 16px;padding:12px;background:var(--card);border:1px solid var(--line);border-radius:8px}
-figure h3{margin:0 0 8px;font-size:1rem}
+figure h3{margin:0 0 8px;font-size:1rem;text-align:center}
 figure img{display:block;width:80%;max-width:560px;height:auto;margin:0 auto}
 .nota{margin-top:6px;font-size:.8rem;color:var(--warn)}
 .fallo{padding:24px 12px;text-align:center;color:var(--warn);border:1px dashed var(--warn);border-radius:6px}
 #indice{margin:20px 0 0;padding:14px 16px;background:var(--card);border:1px solid var(--line);border-radius:8px}
 #indice h2{all:unset;display:block;text-align:center;font-weight:700;font-size:1.1rem;margin-bottom:10px}
 #indice ul{list-style:none;margin:0;padding:0;display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:8px}
-#indice a{display:flex;justify-content:space-between;gap:8px;padding:8px 12px;border:1px solid var(--line);border-radius:6px;color:var(--acc);text-decoration:none;font-weight:600}
+#indice a{display:block;text-align:center;padding:8px 12px;border:1px solid var(--line);border-radius:6px;color:var(--acc);text-decoration:none;font-weight:600}
 #indice a:hover{background:var(--acc);color:#fff}
-#indice a span{color:var(--sub);font-weight:400}
-#indice a:hover span{color:#fff}
 .volver{position:absolute;right:12px;top:50%;transform:translateY(-50%);color:#fff;font-size:.8rem;font-weight:400;text-decoration:none;opacity:.9}
 .volver:hover{text-decoration:underline}
 .subir{position:fixed;right:16px;bottom:16px;padding:10px 14px;background:var(--acc);color:#fff;border-radius:999px;text-decoration:none;font-weight:600;box-shadow:0 2px 8px rgba(0,0,0,.3)}
@@ -166,15 +164,14 @@ def construir_html(grupos: dict, hoy: date, generado: datetime) -> str:  # Arma 
                 titulo = "Seguimiento" if lado == "izq" else "Pronóstico"  # ...título genérico del lado
             cols = f'<div class="cols uno">{columna(titulo, lados[lado])}</div>'  # Una sola columna centrada
         ident = slug(variable, usados)  # Identificador de enlace de esta Variable
-        total = len(lados["izq"]) + len(lados["der"])  # Cantidad de mapas de la Variable
-        indice.append(f'<li><a href="#{ident}">{html.escape(variable)}<span>{total}</span></a></li>')  # Entrada del índice
+        indice.append(f'<li><a href="#{ident}">{html.escape(variable)}</a></li>')  # Entrada del índice
         secciones.append(f'<section id="{ident}"><h2>{html.escape(variable)}<a class="volver" href="#indice">↑ Índice</a></h2>{cols}</section>')  # Sección con título central y enlace para volver
     return (  # Documento HTML completo
         '<!DOCTYPE html><html lang="es"><head><meta charset="utf-8">'  # Cabecera: codificación UTF-8
         '<meta name="viewport" content="width=device-width,initial-scale=1">'  # Adaptable a celulares
         f"<title>{TITULO}</title><style>{CSS}</style></head><body>"  # Título de la pestaña y estilos
         f"<header><h1>{TITULO}</h1>"  # Título principal
-        f'<div class="meta">Información del {hoy:%d-%m-%Y} · generado el {generado:%d-%m-%Y %H:%M}</div></header>'  # Fecha y hora
+        f'<div class="meta">Generado el {generado:%d-%m-%Y %H:%M}</div></header>'  # Fecha y hora
         f'<main><nav id="indice"><h2>Índice</h2><ul>{"".join(indice)}</ul></nav>'  # Índice con un enlace por Variable
         f"{''.join(secciones)}</main>"  # Secciones de las Variables
         '<a class="subir" href="#indice">↑ Índice</a></body></html>')  # Botón flotante para volver al índice
