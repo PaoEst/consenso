@@ -1,18 +1,18 @@
 #!/usr/bin/env python3  # Línea "shebang": permite ejecutar el archivo directamente con Python 3 en Linux/macOS
-"""Genera un HTML "Seguimiento Drivers Climáticos" con las imágenes de Lista_de_Insumos.xlsx incrustadas.
+"""Genera un HTML "Moduladores Climáticos" con las imágenes de Lista_de_Insumos.xlsx incrustadas.
 
 Usa las mismas reglas de consulta que descargar_imagenes.py (fecha de hoy en las URL "variable",
 retroceso de días con 404, reintentos, validación de imagen y logs de auditoría), pero en lugar de
 guardar cada imagen en una carpeta la incrusta (base64) dentro de un único archivo HTML.
 
-Salida:  <salida>/Seguimiento_Drivers_Climaticos_<YYYYMMDD>.html   (se sobrescribe si ya existe)
+Salida:  <salida>/Moduladores_Climaticos_<YYYYMMDD>.html   (se sobrescribe si ya existe)
 
 Distribución de la página:
   - Un título central por cada Variable (en el orden de la tabla).
   - Columna izquierda: filas con Carpeta = Seguimiento.
   - Columna derecha:   filas con Carpeta = Pronostico o Seguim_Pronos.
-  - Si una Variable tiene un solo tipo de información, sus mapas van en UNA columna centrada con el
-    título que corresponde: Seguimiento, Pronóstico o Seguimiento-Pronóstico.
+  - Si una Variable tiene un solo tipo de información, sus mapas van en filas de máximo 4 mapas (la última
+    fila queda centrada) bajo el título que corresponde: Seguimiento, Pronóstico o Seguimiento-Pronóstico.
   - Al inicio hay un índice con un enlace a cada Variable; cada Variable y un botón flotante permiten volver al índice.
   - El título de cada mapa es la columna Insumo. Solo se incluyen filas con Descargar = "si".
 """
@@ -36,7 +36,7 @@ from pathlib import Path  # Manejo de rutas de forma portable
 import descargar_imagenes as di  # Reutiliza las funciones del script de descargas (lectura de tabla, GET con reintentos, etc.)
 
 BASE = Path(__file__).resolve().parent  # Carpeta donde vive este script (rutas por defecto)
-TITULO = "Seguimiento Drivers Climáticos"  # Título principal de la página
+TITULO = "Moduladores Climáticos"  # Título principal de la página
 IZQUIERDA = {"seguimiento"}  # Valores de Carpeta que van en la columna izquierda
 ETIQUETAS = {"seguimiento": "Seguimiento", "pronostico": "Pronóstico", "pronóstico": "Pronóstico", "seguim_pronos": "Seguimiento-Pronóstico"}  # Título que corresponde a cada tipo de Carpeta
 DERECHA = {"pronostico", "pronóstico", "seguim_pronos"}  # Valores de Carpeta que van en la columna derecha (junto a los pronósticos)
@@ -55,7 +55,7 @@ html{scroll-behavior:smooth}
 section{scroll-margin-top:12px}
 h2{position:relative;text-align:center;margin:40px 0 12px;padding:10px 96px;background:var(--acc);color:#fff;border-radius:8px;font-size:1.4rem}
 .cols{display:grid;grid-template-columns:1fr 1fr;gap:16px;align-items:start}
-.col h4{margin:0 0 8px;color:var(--sub);font-size:.85rem;text-transform:uppercase;letter-spacing:.06em;text-align:center}
+.gtitulo,.col h4{margin:0 0 8px;color:var(--sub);font-size:.85rem;text-transform:uppercase;letter-spacing:.06em;text-align:center}
 figure{margin:0 0 16px;padding:12px;background:var(--card);border:1px solid var(--line);border-radius:8px}
 figure h3{margin:0 0 8px;font-size:1rem;text-align:center}
 figure img{display:block;width:80%;max-width:560px;height:auto;margin:0 auto}
@@ -70,7 +70,11 @@ figure img{display:block;width:80%;max-width:560px;height:auto;margin:0 auto}
 .volver:hover{text-decoration:underline}
 .subir{position:fixed;right:16px;bottom:16px;padding:10px 14px;background:var(--acc);color:#fff;border-radius:999px;text-decoration:none;font-weight:600;box-shadow:0 2px 8px rgba(0,0,0,.3)}
 @media print{.subir,.volver{display:none}}
-.cols.uno{grid-template-columns:minmax(0,640px);justify-content:center}
+.fila{display:flex;flex-wrap:wrap;justify-content:center;gap:16px}
+.fila figure{flex:0 0 calc((100% - 48px)/4);margin:0;min-width:0}
+.fila figure img{width:100%;max-width:none}
+@media (max-width:1100px){.fila figure{flex-basis:calc((100% - 16px)/2)}}
+@media (max-width:600px){.fila figure{flex-basis:100%}}
 @media (max-width:900px){.cols{grid-template-columns:1fr}h2{padding:10px 12px}.volver{position:static;display:block;transform:none;margin-top:4px}}
 """  # Estilos de la página (claro/oscuro; en pantallas angostas las columnas se apilan)
 
@@ -146,6 +150,10 @@ def figura(f, img, hoy) -> str:  # Construye el bloque HTML de un mapa (título 
     return f"<figure><h3>{titulo}</h3>{cuerpo}</figure>"  # Bloque completo del mapa
 
 
+def grilla(nombre: str, figuras: list) -> str:  # Construye una cuadrícula de mapas (máx. 4 por fila) para una Variable de un solo tipo
+    return f'<h4 class="gtitulo">{nombre}</h4><div class="fila">{"".join(figuras)}</div>'  # Encabezado centrado y filas de hasta 4 mapas
+
+
 def columna(nombre: str, figuras: list) -> str:  # Construye una columna (izquierda o derecha) de una Variable
     contenido = "".join(figuras)  # Los mapas de la columna, uno debajo de otro
     return f'<div class="col"><h4>{nombre}</h4>{contenido}</div>'  # Columna con su encabezado pequeño
@@ -156,13 +164,13 @@ def construir_html(grupos: dict, hoy: date, generado: datetime) -> str:  # Arma 
     for variable, lados in grupos.items():  # Recorre las Variables en el orden de la tabla
         if lados["izq"] and lados["der"]:  # Hay seguimiento y pronóstico: dos columnas
             cols = f'<div class="cols">{columna("Seguimiento", lados["izq"])}{columna("Pronóstico", lados["der"])}</div>'  # Izquierda y derecha
-        else:  # Un solo tipo de información: una columna centrada
+        else:  # Un solo tipo de información: filas de hasta 4 mapas
             lado = "izq" if lados["izq"] else "der"  # Lado que tiene los mapas
             if len(lados["tipos"]) == 1:  # Un único tipo (Seguimiento, Pronostico o Seguim_Pronos)...
                 titulo = ETIQUETAS.get(next(iter(lados["tipos"])), "Pronóstico")  # ...su título correspondiente
             else:  # Varios tipos del mismo lado...
                 titulo = "Seguimiento" if lado == "izq" else "Pronóstico"  # ...título genérico del lado
-            cols = f'<div class="cols uno">{columna(titulo, lados[lado])}</div>'  # Una sola columna centrada
+            cols = grilla(titulo, lados[lado])  # Cuadrícula de mapas con su título
         ident = slug(variable, usados)  # Identificador de enlace de esta Variable
         indice.append(f'<li><a href="#{ident}">{html.escape(variable)}</a></li>')  # Entrada del índice
         secciones.append(f'<section id="{ident}"><h2>{html.escape(variable)}<a class="volver" href="#indice">↑ Índice</a></h2>{cols}</section>')  # Sección con título central y enlace para volver
@@ -226,7 +234,7 @@ def main():  # Función principal del programa
         lados[lado_de(f["carpeta"])].append(figura(f, img, hoy))  # Agrega el mapa a la columna que le corresponde
         lados["tipos"].add(di.norm(f["carpeta"]))  # Recuerda qué tipos de información tiene la Variable
 
-    destino = a.salida / f"Seguimiento_Drivers_Climaticos_{hoy:%Y%m%d}.html"  # Ruta del HTML de salida
+    destino = a.salida / f"Moduladores_Climaticos_{hoy:%Y%m%d}.html"  # Ruta del HTML de salida
     pagina = construir_html(grupos, hoy, datetime.now()).encode("utf-8")  # Página completa en bytes UTF-8
     di.guardar_atomico(destino, pagina)  # Guarda el HTML (reemplaza si ya existía)
     sha = hashlib.sha256(pagina).hexdigest()  # Huella SHA-256 del HTML generado
