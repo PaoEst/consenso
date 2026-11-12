@@ -1,9 +1,8 @@
 #!/usr/bin/env python3  # Línea "shebang": permite ejecutar el archivo directamente con Python 3 en Linux/macOS
 """Genera un HTML "Moduladores Climáticos" con las imágenes de Lista_de_Insumos.xlsx incrustadas.
 
-Usa las mismas reglas de consulta que descargar_imagenes.py (fecha de hoy en las URL "variable",
-retroceso de días con 404, reintentos, validación de imagen y logs de auditoría), pero en lugar de
-guardar cada imagen en una carpeta la incrusta (base64) dentro de un único archivo HTML.
+Reglas de consulta: fecha de hoy en las URL "variable", retroceso de días con 404, reintentos,
+validación de imagen y logs de auditoría. Cada imagen se incrusta (base64) dentro de un único archivo HTML.
 
 Salida:  <salida>/Moduladores_Climaticos_<YYYYMMDD>.html   (se sobrescribe si ya existe)
 
@@ -24,19 +23,23 @@ import hashlib  # Para calcular el SHA-256 de cada imagen (auditoría)
 import html  # Para escapar los textos de la tabla antes de ponerlos en el HTML
 import json  # Para escribir los registros de auditoría en formato JSON
 import logging  # Para el log de ejecución (archivo + pantalla)
+import os  # Para reemplazar archivos de forma atómica
 import platform  # Para registrar versión de Python y sistema operativo
 import re  # Para limpiar los nombres al crear identificadores de enlace
 import socket  # Para registrar el nombre del equipo (auditoría)
 import sys  # Para stdout y el código de salida del programa
+import time  # Para medir duración y esperar entre reintentos
 import urllib.error  # Excepciones HTTP/red de urllib
+import urllib.request  # Cliente HTTP de la librería estándar (sin dependencias)
 import unicodedata  # Para quitar acentos al crear identificadores de enlace
 import uuid  # Para generar un identificador único por ejecución
 from datetime import date, datetime, timedelta, timezone  # Manejo de fechas y horas
 from pathlib import Path  # Manejo de rutas de forma portable
 
-import descargar_imagenes as di  # Reutiliza las funciones del script de descargas (lectura de tabla, GET con reintentos, etc.)
-
 BASE = Path(__file__).resolve().parent  # Carpeta donde vive este script (rutas por defecto)
+FECHA_RE = re.compile(r"(?<!\d)(\d{8})(?!\d)")  # Busca exactamente 8 dígitos seguidos (YYYYMMDD) en una URL
+USER_AGENT = "Mozilla/5.0 (compatible; moduladores-climaticos/1.0)"  # Identificación enviada al servidor
+log = logging.getLogger("moduladores")  # Logger principal de la aplicación
 TITULO = "Moduladores Climáticos"  # Título principal de la página
 IZQUIERDA = {"seguimiento"}  # Valores de Carpeta que van en la columna izquierda
 ETIQUETAS = {"seguimiento": "Seguimiento", "pronostico": "Pronóstico", "pronóstico": "Pronóstico", "seguim_pronos": "Seguimiento-Pronóstico"}  # Título que corresponde a cada tipo de Carpeta
@@ -113,53 +116,131 @@ def slug(texto: str, usados: set) -> str:  # Crea un identificador de enlace ún
     return ident  # Identificador único
 
 
+# ----------------------------------------------------------------- lectura de la tabla y consulta de imágenes
+def norm(s) -> str:  # Normaliza un texto para comparar encabezados
+    return re.sub(r"\s+", " ", str(s or "")).strip().lower()  # Minúsculas, sin espacios dobles ni extremos
+
+
+def quiere_descargar(valor) -> bool:  # Interpreta el contenido de la columna "Descargar"
+    return norm(valor) in ("si", "sí", "s", "yes", "true", "1")  # Solo un "sí" explícito activa la descarga; "no" o vacío = no descargar
+
+
+def leer_tabla(ruta: Path):  # Lee el Excel y devuelve la lista de imágenes a descargar
+    """Lee el Excel y devuelve filas con carpeta y variable (heredadas de celdas vacías)."""
+    import openpyxl  # Se importa aquí para que --help funcione aunque no esté instalado
+    ws = openpyxl.load_workbook(ruta, data_only=True).worksheets[0]  # Abre la primera hoja del libro
+    filas = ws.iter_rows(values_only=True)  # Iterador de filas con solo los valores de las celdas
+    cab = [norm(c) for c in next(filas)]  # Primera fila = encabezados, normalizados
+    req = ["carpeta", "variable", "filename_type", "filename", "link de imagen", "descargar"]  # Columnas obligatorias
+    faltan = [c for c in req if c not in cab]  # Detecta las columnas obligatorias ausentes
+    if faltan:  # Si falta alguna...
+        raise SystemExit(f"Faltan columnas en {ruta.name}: {faltan}")  # ...termina con un mensaje claro
+    idx = {c: cab.index(c) for c in req + (["insumo"] if "insumo" in cab else [])}  # Posición de cada columna (y "insumo" si existe)
+    out, carpeta, variable = [], None, None  # Lista de resultados, y carpeta/variable vigentes (para celdas vacías)
+    for n, fila in enumerate(filas, start=2):  # Recorre los datos; n = número de fila en Excel
+        g = lambda k: (str(fila[idx[k]]).strip() if k in idx and fila[idx[k]] else "")  # Obtiene el texto de una columna ("" si vacía)
+        if g("carpeta"):  # Si la celda Carpeta trae valor...
+            carpeta = g("carpeta")  # ...pasa a ser la carpeta vigente (las vacías heredan la anterior)
+        if g("variable"):  # Si la celda Variable trae valor...
+            variable = g("variable")  # ...pasa a ser la variable vigente (las vacías heredan la anterior)
+        if not (g("filename") and g("link de imagen")):  # Si falta nombre o enlace...
+            continue  # ...se omite la fila
+        out.append(dict(fila=n, carpeta=carpeta or "sin_carpeta",  # Guarda la fila y su carpeta
+                        variable=variable or "sin_variable",  # y su variable
+                        insumo=g("insumo"), tipo=norm(g("filename_type")),  # Descripción y tipo (fijo/variable)
+                        descargar_valor=g("descargar"),  # Texto original de la columna Descargar (para el log)
+                        descargar=quiere_descargar(g("descargar")),  # True si debe descargarse
+                        filename=g("filename"), url=g("link de imagen")))  # Nombre base y URL de la imagen
+    return out  # Devuelve todas las imágenes a procesar
+
+
+def url_para_fecha(url: str, d: date) -> str:  # Ajusta la fecha dentro de una URL "variable"
+    return FECHA_RE.sub(d.strftime("%Y%m%d"), url)  # Reemplaza el YYYYMMDD de la URL por la fecha indicada
+
+
+def descargar(url: str, timeout: int, reintentos: int):  # Descarga una URL con reintentos
+    """GET con reintentos. Devuelve (bytes, info). Lanza HTTPError si 4xx."""
+    ultimo = None  # Guarda el último error para relanzarlo si se agotan los intentos
+    for intento in range(1, reintentos + 1):  # Repite hasta el número de reintentos
+        t0 = time.monotonic()  # Marca de tiempo para medir la duración
+        try:  # Intenta la petición
+            req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})  # Construye la petición con User-Agent
+            with urllib.request.urlopen(req, timeout=timeout) as r:  # Abre la conexión con tiempo límite
+                datos = r.read()  # Lee todo el contenido (los bytes de la imagen)
+                return datos, dict(  # Devuelve los bytes y metadatos para auditoría
+                    http=r.status, url_final=r.geturl(), intentos=intento,  # Código HTTP, URL final tras redirecciones, nº de intento
+                    content_type=(r.headers.get_content_type() or "").lower(),  # Tipo de contenido devuelto
+                    last_modified=r.headers.get("Last-Modified"),  # Fecha de modificación según el servidor
+                    etag=r.headers.get("ETag"),  # Identificador de versión del servidor
+                    ms=int((time.monotonic() - t0) * 1000))  # Duración de la descarga en milisegundos
+        except urllib.error.HTTPError as e:  # El servidor respondió con un error HTTP
+            if e.code < 500:  # Errores 4xx (p. ej. 404): reintentar no sirve
+                e.intentos = intento  # Anota cuántos intentos se hicieron
+                raise  # Se propaga al llamador
+            ultimo = e  # Errores 5xx: se recuerda y se reintenta
+        except (urllib.error.URLError, TimeoutError, ConnectionError, OSError) as e:  # Fallos de red/timeout
+            ultimo = e  # Se recuerda el error y se reintenta
+        log.warning("Intento %d/%d falló para %s: %s", intento, reintentos, url, ultimo)  # Deja constancia del fallo en el log
+        if intento < reintentos:  # Si quedan intentos...
+            time.sleep(2 ** intento)  # ...espera 2, 4, 8... segundos (espera exponencial)
+    raise ultimo  # Se agotaron los intentos: relanza el último error
+
+
+def guardar_atomico(destino: Path, datos: bytes):  # Guarda el archivo sin dejar archivos a medias
+    destino.parent.mkdir(parents=True, exist_ok=True)  # Crea las carpetas de destino si no existen
+    tmp = destino.with_name(destino.name + ".part")  # Archivo temporal junto al destino
+    tmp.write_bytes(datos)  # Escribe primero en el temporal
+    os.replace(tmp, destino)  # Lo renombra al nombre final de forma atómica
+
+
+# ----------------------------------------------------------------- construcción de la página
 def lado_de(carpeta: str) -> str:  # Decide en qué columna va una fila según su Carpeta
-    n = di.norm(carpeta)  # Normaliza el texto (minúsculas, sin espacios extra)
+    n = norm(carpeta)  # Normaliza el texto (minúsculas, sin espacios extra)
     if n in IZQUIERDA:  # Seguimiento...
         return "izq"  # ...van a la izquierda
     if n not in DERECHA:  # Si no es un valor conocido...
-        di.log.warning("Carpeta desconocida %r: se coloca en la columna derecha", carpeta)  # ...se avisa en el log
+        log.warning("Carpeta desconocida %r: se coloca en la columna derecha", carpeta)  # ...se avisa en el log
     return "der"  # Pronostico (y cualquier otro valor) va a la derecha
 
 
 def obtener_imagen(f, hoy, a, audit, base):  # Descarga una imagen con las reglas de siempre y la devuelve en memoria
     if f["tipo"] == "variable":  # URL que cambia cada día
-        if not di.FECHA_RE.search(f["url"]):  # Si la URL no contiene una fecha YYYYMMDD...
-            di.log.warning("[%s] fila %d es 'variable' pero la URL no contiene YYYYMMDD", f["filename"], f["fila"])  # ...se avisa
-        cand = [(di.url_para_fecha(f["url"], hoy - timedelta(days=k)), hoy - timedelta(days=k))  # Candidatas: hoy y días previos
+        if not FECHA_RE.search(f["url"]):  # Si la URL no contiene una fecha YYYYMMDD...
+            log.warning("[%s] fila %d es 'variable' pero la URL no contiene YYYYMMDD", f["filename"], f["fila"])  # ...se avisa
+        cand = [(url_para_fecha(f["url"], hoy - timedelta(days=k)), hoy - timedelta(days=k))  # Candidatas: hoy y días previos
                 for k in range(a.retroceso + 1)]
     else:  # URL fija
         cand = [(f["url"], None)]  # Una sola candidata: la URL tal cual
     motivo = "sin imagen disponible"  # Motivo del fallo (si ninguna candidata sirve)
     for url, fecha_url in cand:  # Prueba cada URL candidata en orden
-        di.log.info("[%s/%s/%s] GET %s", f["carpeta"], f["variable"], f["filename"], url)  # Registra la descarga que se intenta
+        log.info("[%s/%s/%s] GET %s", f["carpeta"], f["variable"], f["filename"], url)  # Registra la descarga que se intenta
         try:  # Intenta descargar
-            datos, info = di.descargar(url, a.timeout, a.reintentos)  # GET con reintentos
+            datos, info = descargar(url, a.timeout, a.reintentos)  # GET con reintentos
         except urllib.error.HTTPError as e:  # El servidor devolvió un error HTTP
-            di.log.warning("[%s] HTTP %s en %s", f["filename"], e.code, url)  # Lo registra en el log
+            log.warning("[%s] HTTP %s en %s", f["filename"], e.code, url)  # Lo registra en el log
             audit(**base, url_solicitada=url, resultado="http_error", http=e.code)  # Y en la auditoría
             motivo = f"HTTP {e.code}"  # Guarda el motivo para mostrarlo en la página
             if e.code == 404 and len(cand) > 1:  # 404 en fila variable: la imagen del día aún no existe
                 continue  # Prueba con el día anterior
             break  # Otro error HTTP: se da por fallida
         except Exception as e:  # Fallo de red u otro error inesperado
-            di.log.error("[%s] fallo de red en %s: %s", f["filename"], url, e)  # Lo registra en el log
+            log.error("[%s] fallo de red en %s: %s", f["filename"], url, e)  # Lo registra en el log
             audit(**base, url_solicitada=url, resultado="error_red", error=repr(e))  # Y en la auditoría
             motivo = "error de red o certificado"  # Motivo para mostrar en la página
             break  # Se da por fallida
         if not info["content_type"].startswith("image/") or not datos:  # Valida que sea realmente una imagen y no esté vacía
-            di.log.error("[%s] respuesta no es imagen (content-type=%s, %d bytes)", f["filename"], info["content_type"], len(datos))  # Registra el problema
+            log.error("[%s] respuesta no es imagen (content-type=%s, %d bytes)", f["filename"], info["content_type"], len(datos))  # Registra el problema
             audit(**base, url_solicitada=url, resultado="no_es_imagen", http=info["http"], content_type=info["content_type"], bytes=len(datos))  # Auditoría
             motivo = "la respuesta no es una imagen"  # Motivo para mostrar en la página
             break  # Se da por fallida
         sha = hashlib.sha256(datos).hexdigest()  # Huella SHA-256 del contenido descargado
         if fecha_url and fecha_url != hoy:  # Si se usó la imagen de un día anterior...
-            di.log.warning("[%s] la imagen de hoy no existía; se usó la del %s", f["filename"], fecha_url)  # ...se deja constancia
-        di.log.info("[%s] OK (%d bytes, sha256=%s…)", f["filename"], len(datos), sha[:12])  # Registra la descarga exitosa
+            log.warning("[%s] la imagen de hoy no existía; se usó la del %s", f["filename"], fecha_url)  # ...se deja constancia
+        log.info("[%s] OK (%d bytes, sha256=%s…)", f["filename"], len(datos), sha[:12])  # Registra la descarga exitosa
         audit(**base, url_solicitada=url, resultado="ok", bytes=len(datos), sha256=sha, fecha_en_url=str(fecha_url) if fecha_url else None, **info)  # Auditoría completa
         uri = "data:%s;base64,%s" % (info["content_type"], base64.b64encode(datos).decode("ascii"))  # Imagen incrustada como data URI
         return {"ok": True, "uri": uri, "fecha_url": fecha_url, "bytes": len(datos)}  # Devuelve la imagen lista para el HTML
-    di.log.error("[%s] sin imagen disponible tras probar %d fecha(s)", f["filename"], len(cand))  # Registra el fallo definitivo
+    log.error("[%s] sin imagen disponible tras probar %d fecha(s)", f["filename"], len(cand))  # Registra el fallo definitivo
     return {"ok": False, "motivo": motivo}  # Devuelve el motivo para mostrar el aviso en la página
 
 
@@ -227,10 +308,10 @@ def main():  # Función principal del programa
     run_id = uuid.uuid4().hex[:8]  # Identificador corto único de esta ejecución
 
     fmt = logging.Formatter(f"%(asctime)s [%(levelname)s] [{run_id}] %(message)s")  # Formato de cada línea del log
-    di.log.setLevel(logging.DEBUG)  # Registra todos los niveles
+    log.setLevel(logging.DEBUG)  # Registra todos los niveles
     for h in (logging.FileHandler(a.logs / "ejecucion.log", encoding="utf-8"), logging.StreamHandler(sys.stdout)):  # Archivo (append) y pantalla
         h.setFormatter(fmt)  # Aplica el formato al manejador
-        di.log.addHandler(h)  # Registra el manejador en el logger
+        log.addHandler(h)  # Registra el manejador en el logger
     auditoria = open(a.logs / "auditoria.jsonl", "a", encoding="utf-8")  # Abre el archivo de auditoría en modo append
 
     def audit(**kw):  # Escribe un registro de auditoría
@@ -238,19 +319,19 @@ def main():  # Función principal del programa
         auditoria.write(json.dumps(kw, ensure_ascii=False) + "\n")  # Una línea JSON por registro
         auditoria.flush()  # Fuerza el guardado en disco
 
-    di.log.info("=== INICIO HTML run=%s fecha=%s host=%s usuario=%s python=%s so=%s", run_id, hoy, socket.gethostname(), getpass.getuser(), platform.python_version(), platform.platform())  # Contexto
-    di.log.info("tabla=%s salida=%s", a.tabla, a.salida)  # Registra la tabla de entrada y la carpeta de salida
+    log.info("=== INICIO HTML run=%s fecha=%s host=%s usuario=%s python=%s so=%s", run_id, hoy, socket.gethostname(), getpass.getuser(), platform.python_version(), platform.platform())  # Contexto
+    log.info("tabla=%s salida=%s", a.tabla, a.salida)  # Registra la tabla de entrada y la carpeta de salida
     try:  # Intenta leer el Excel
-        filas = di.leer_tabla(a.tabla)  # Carga la lista de imágenes
+        filas = leer_tabla(a.tabla)  # Carga la lista de imágenes
     except Exception:  # Si falla (archivo inexistente, dañado, etc.)
-        di.log.exception("No se pudo leer la tabla")  # Registra el error con su traza completa
+        log.exception("No se pudo leer la tabla")  # Registra el error con su traza completa
         return 2  # Termina con código 2 (error de configuración)
 
     grupos, cuentas = {}, {"ok": 0, "omitido": 0, "error": 0}  # Mapas agrupados por Variable y contadores del resumen
     for f in filas:  # Procesa cada fila de la tabla
         base = {"fecha_ejecucion": str(hoy), "carpeta": f["carpeta"], "variable": f["variable"], "insumo": f["insumo"], "fila_excel": f["fila"], "filename_type": f["tipo"], "filename": f["filename"]}  # Datos comunes de auditoría
         if not f["descargar"]:  # Si la columna Descargar no dice "si"...
-            di.log.info("[%s/%s/%s] Descargar=%r: no se incluye", f["carpeta"], f["variable"], f["filename"], f["descargar_valor"])  # ...se informa
+            log.info("[%s/%s/%s] Descargar=%r: no se incluye", f["carpeta"], f["variable"], f["filename"], f["descargar_valor"])  # ...se informa
             audit(**base, resultado="omitido_descargar_no", descargar=f["descargar_valor"])  # Y se registra en la auditoría
             cuentas["omitido"] += 1  # Se cuenta como omitida (no es un error)
             continue  # Pasa a la siguiente fila
@@ -258,15 +339,15 @@ def main():  # Función principal del programa
         cuentas["ok" if img["ok"] else "error"] += 1  # Suma al contador correspondiente
         lados = grupos.setdefault(f["variable"], {"izq": [], "der": [], "tipos": set()})  # Crea la Variable si es la primera vez que aparece
         lados[lado_de(f["carpeta"])].append(figura(f, img, hoy))  # Agrega el mapa a la columna que le corresponde
-        lados["tipos"].add(di.norm(f["carpeta"]))  # Recuerda qué tipos de información tiene la Variable
+        lados["tipos"].add(norm(f["carpeta"]))  # Recuerda qué tipos de información tiene la Variable
 
     destino = a.salida / f"Moduladores_Climaticos_{hoy:%Y%m%d}.html"  # Ruta del HTML de salida
     pagina = construir_html(grupos, hoy, datetime.now()).encode("utf-8")  # Página completa en bytes UTF-8
-    di.guardar_atomico(destino, pagina)  # Guarda el HTML (reemplaza si ya existía)
+    guardar_atomico(destino, pagina)  # Guarda el HTML (reemplaza si ya existía)
     sha = hashlib.sha256(pagina).hexdigest()  # Huella SHA-256 del HTML generado
-    di.log.info("HTML generado: %s (%.1f MB, sha256=%s…)", destino, len(pagina) / 1e6, sha[:12])  # Registra el archivo generado
+    log.info("HTML generado: %s (%.1f MB, sha256=%s…)", destino, len(pagina) / 1e6, sha[:12])  # Registra el archivo generado
     audit(evento="html_generado", ruta=str(destino), bytes=len(pagina), sha256=sha)  # Auditoría del archivo generado
-    di.log.info("=== FIN HTML run=%s ok=%d omitidos=%d errores=%d", run_id, cuentas["ok"], cuentas["omitido"], cuentas["error"])  # Resumen final
+    log.info("=== FIN HTML run=%s ok=%d omitidos=%d errores=%d", run_id, cuentas["ok"], cuentas["omitido"], cuentas["error"])  # Resumen final
     audit(evento="resumen", **cuentas)  # Resumen final en la auditoría
     auditoria.close()  # Cierra el archivo de auditoría
     return 1 if cuentas["error"] else 0  # Código de salida: 1 si alguna imagen falló, 0 si todo bien
