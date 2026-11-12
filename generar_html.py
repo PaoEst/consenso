@@ -13,6 +13,7 @@ Distribución de la página:
   - Columna derecha:   filas con Carpeta = Pronostico o Seguim_Pronos.
   - Si una Variable tiene un solo tipo de información, sus mapas van en filas de máximo 4 mapas (la última
     fila queda centrada) bajo el título que corresponde: Seguimiento, Pronóstico o Seguimiento-Pronóstico.
+  - Al hacer clic en un mapa se amplía (clic de nuevo: tamaño real; otro clic o Esc: cerrar) sin duplicar la imagen en el archivo.
   - Al inicio hay un índice con un enlace a cada Variable; cada Variable y un botón flotante permiten volver al índice.
   - El título de cada mapa es la columna Insumo. Solo se incluyen filas con Descargar = "si".
 """
@@ -69,7 +70,13 @@ figure img{display:block;width:80%;max-width:560px;height:auto;margin:0 auto}
 .volver{position:absolute;right:12px;top:50%;transform:translateY(-50%);color:#fff;font-size:.8rem;font-weight:400;text-decoration:none;opacity:.9}
 .volver:hover{text-decoration:underline}
 .subir{position:fixed;right:16px;bottom:16px;padding:10px 14px;background:var(--acc);color:#fff;border-radius:999px;text-decoration:none;font-weight:600;box-shadow:0 2px 8px rgba(0,0,0,.3)}
-@media print{.subir,.volver{display:none}}
+@media print{.subir,.volver,#zoom{display:none}}
+figure img{cursor:zoom-in}
+#zoom{position:fixed;inset:0;z-index:20;display:flex;overflow:auto;background:rgba(0,0,0,.88);cursor:zoom-out}
+#zoom[hidden]{display:none}
+#zoom img{margin:auto;max-width:96vw;max-height:90vh;width:auto;height:auto;background:#fff}
+#zoom.real img{max-width:none;max-height:none}
+#zoom p{position:fixed;left:0;right:0;bottom:0;margin:0;padding:8px 12px;text-align:center;color:#fff;background:rgba(0,0,0,.65);font-size:.9rem;pointer-events:none}
 .fila{display:flex;flex-wrap:wrap;justify-content:center;gap:16px}
 .fila figure{flex:0 0 calc((100% - 48px)/4);margin:0;min-width:0}
 .fila figure img{width:100%;max-width:none}
@@ -77,6 +84,23 @@ figure img{display:block;width:80%;max-width:560px;height:auto;margin:0 auto}
 @media (max-width:600px){.fila figure{flex-basis:100%}}
 @media (max-width:900px){.cols{grid-template-columns:1fr}h2{padding:10px 12px}.volver{position:static;display:block;transform:none;margin-top:4px}}
 """  # Estilos de la página (claro/oscuro; en pantallas angostas las columnas se apilan)
+
+JS = """
+(function(){
+var z=document.getElementById('zoom'),zi=z.querySelector('img'),zp=z.querySelector('p');
+function cerrar(){z.hidden=true;z.classList.remove('real');zi.removeAttribute('src');document.body.style.overflow='';}
+document.addEventListener('click',function(e){
+  var t=e.target;
+  if(t.matches&&t.matches('figure img')){ // clic en un mapa: abre la ampliación con esa misma imagen
+    zi.src=t.src;zi.alt=t.alt;zp.textContent=t.alt;z.hidden=false;z.scrollTop=0;z.scrollLeft=0;
+    document.body.style.overflow='hidden';return;}
+  if(!z.hidden&&z.contains(t)){ // clic sobre la ampliación: tamaño real y luego cerrar
+    if(z.classList.contains('real')||(zi.naturalWidth<=zi.clientWidth+1&&zi.naturalHeight<=zi.clientHeight+1)){cerrar();}
+    else{z.classList.add('real');}}
+});
+document.addEventListener('keydown',function(e){if(e.key==='Escape'&&!z.hidden){cerrar();}}); // Esc cierra
+})();
+"""  # Script del zoom (una sola capa que reutiliza la imagen ya incrustada; no duplica imágenes)
 
 
 def slug(texto: str, usados: set) -> str:  # Crea un identificador de enlace único a partir del nombre de una Variable
@@ -182,7 +206,9 @@ def construir_html(grupos: dict, hoy: date, generado: datetime) -> str:  # Arma 
         f'<div class="meta">Generado el {generado:%d-%m-%Y %H:%M}</div></header>'  # Fecha y hora
         f'<main><nav id="indice"><h2>Índice</h2><ul>{"".join(indice)}</ul></nav>'  # Índice con un enlace por Variable
         f"{''.join(secciones)}</main>"  # Secciones de las Variables
-        '<a class="subir" href="#indice">↑ Índice</a></body></html>')  # Botón flotante para volver al índice
+        '<a class="subir" href="#indice">↑ Índice</a>'  # Botón flotante para volver al índice
+        '<div id="zoom" hidden><img alt=""><p></p></div>'  # Capa única para ampliar el mapa (imagen y título se rellenan al hacer clic)
+        f"<script>{JS}</script></body></html>")  # Script del zoom
 
 
 def main():  # Función principal del programa
