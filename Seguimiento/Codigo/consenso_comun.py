@@ -361,3 +361,154 @@ th{{color:var(--sub);font-weight:600}} a{{color:var(--azul);font-weight:600;text
     ruta = carpeta / "index.html"
     ruta.write_text(pagina, encoding="utf-8")
     return ruta
+
+
+# ==========================================================================
+# Otros pronósticos (modelos externos) - Otros_pronosticos.xlsx
+# ==========================================================================
+import difflib  # noqa: E402
+
+ARCHIVO_OTROS = "Otros_pronosticos.xlsx"
+PALETA_OTROS = ["#c2185b", "#00897b", "#7b1fa2", "#6d4c41", "#827717", "#d32f2f", "#5d4037",
+                "#00838f", "#ef6c00", "#455a64"]
+_ESTILO_FREQ = {"mensual": dict(dash="dash", width=3), "semanal": dict(dash="dot", width=3),
+                "diario": dict(dash="solid", width=2)}
+
+
+def _cuenca_de_columna(col: str, cuencas: list[str], hoja: str) -> str | None:
+    """Cuenca de aportes que corresponde a una columna: nombre normalizado igual o, si no,
+    el más parecido (>= 0.85, p. ej. 'Ceunca 2' -> 'Cuenca 2') con una advertencia en el log."""
+    mapa = {norm(c): c for c in cuencas}
+    n = norm(col)
+    if n in mapa:
+        return mapa[n]
+    cerca = difflib.get_close_matches(n, list(mapa), n=1, cutoff=0.85)
+    if cerca:
+        log.warning("Otros pronósticos [%s]: la columna '%s' no coincide exacto; se asocia a la cuenca '%s'",
+                    hoja, col, mapa[cerca[0]])
+        return mapa[cerca[0]]
+    log.warning("Otros pronósticos [%s]: la columna '%s' no corresponde a ninguna cuenca de Seguimiento_Aportes; se ignora",
+                hoja, col)
+    return None
+
+
+def leer_otros_pronosticos(ruta: Path, fechas: dict, cuencas: list[str]) -> dict[str, list[dict]]:
+    """Lee las hojas mensuales / semanales / diarias y devuelve {cuenca: [serie, ...]}.
+
+    Cada serie: {modelo, frecuencia, nombre, color, dias: {Timestamp: valor}}.
+    mensual -> el valor aplica a todos los días del mes; semanal (S1..S5 del consenso) -> a todos los
+    días de esa semana según la hoja Fechas; diario -> un valor por día."""
+    if not ruta.exists():
+        log.info("Otros pronósticos: no existe %s; se continúa sin ellos", ruta.name)
+        return {}
+    xl = pd.ExcelFile(ruta)
+    acum: dict[tuple, dict] = {}   # (modelo, freq, cuenca) -> {día: valor}
+    for hoja in xl.sheet_names:
+        n = norm(hoja)
+        freq = "mensual" if "mensual" in n else "semanal" if "semanal" in n else "diario" if "diari" in n else None
+        if freq is None:
+            log.warning("Otros pronósticos: la hoja '%s' no es mensual/semanal/diaria; se ignora", hoja)
+            continue
+        df = pd.read_excel(ruta, sheet_name=hoja)
+        df.columns = [str(c).strip() for c in df.columns]
+        if df.shape[1] < 3:
+            log.warning("Otros pronósticos [%s]: faltan columnas; se ignora", hoja)
+            continue
+        col_mod, col_fecha = df.columns[0], df.columns[1]
+        mapa_cols = {c: _cuenca_de_columna(c, cuencas, hoja) for c in df.columns[2:]}
+        df = df.dropna(subset=[col_mod, col_fecha], how="any")
+        log.info("Otros pronósticos [%s]: %d filas de modelo; columnas->cuenca: %s", hoja, len(df),
+                 {k: v for k, v in mapa_cols.items() if v})
+        for _, r in df.iterrows():
+            modelo = str(r[col_mod]).strip()
+            clave = r[col_fecha]
+            if not modelo:
+                continue
+            if freq == "mensual":
+                t = pd.to_datetime(clave, errors="coerce")
+                if pd.isna(t):
+                    log.warning("Otros pronósticos [%s]: mes ilegible %r (%s)", hoja, clave, modelo)
+                    continue
+                ini = t.normalize().replace(day=1)
+                dias = list(pd.date_range(ini, ini + pd.offsets.MonthEnd(0)))
+            elif freq == "semanal":
+                m = re.search(r"(\d+)", str(clave))
+                sem = next((s for s in fechas["semanas"] if m and s["n"] == int(m.group(1))), None)
+                if sem is None:
+                    log.warning("Otros pronósticos [%s]: la semana %r (%s) no existe en la hoja Fechas del consenso",
+                                hoja, clave, modelo)
+                    continue
+                dias = list(pd.date_range(sem["ini"], sem["fin"]))
+            else:
+                t = pd.to_datetime(clave, errors="coerce")
+                if pd.isna(t):
+                    log.warning("Otros pronósticos [%s]: día ilegible %r (%s)", hoja, clave, modelo)
+                    continue
+                dias = [t.normalize()]
+            for col, cuenca in mapa_cols.items():
+                if cuenca is None:
+                    continue
+                v = pd.to_numeric(r[col], errors="coerce")
+                if pd.isna(v):
+                    continue
+                d = acum.setdefault((modelo, freq, cuenca), {})
+                for dia in dias:
+                    if dia in d and d[dia] != float(v):
+                        log.warning("Otros pronósticos: %s/%s/%s repetido el %s; gana el último valor",
+                                    modelo, freq, cuenca, dia.date())
+                    d[dia] = float(v)
+    modelos = sorted({k[0] for k in acum})
+    freqs_por_modelo = {m: {k[1] for k in acum if k[0] == m} for m in modelos}
+    color = {m: PALETA_OTROS[i % len(PALETA_OTROS)] for i, m in enumerate(modelos)}
+    out: dict[str, list[dict]] = {}
+    for (modelo, freq, cuenca), dias in sorted(acum.items()):
+        nombre = modelo if len(freqs_por_modelo[modelo]) == 1 else f"{modelo} ({freq})"
+        out.setdefault(cuenca, []).append({"modelo": modelo, "frecuencia": freq, "nombre": nombre,
+                                           "color": color[modelo], "dias": dias})
+    log.info("Otros pronósticos: modelos=%s | cuencas con datos=%s", modelos, sorted(out))
+    return out
+
+
+def agregar_otros_pronosticos(fig, series: list[dict], ini, x_fin, row: int = 1, col: int = 1) -> int:
+    """Una traza por modelo (y frecuencia) con leyenda propia 'legend2'. Devuelve cuántas dibujó."""
+    n = 0
+    for s in series:
+        dias = sorted(d for d in s["dias"] if ini <= d < x_fin)
+        if not dias:
+            log.debug("Otros pronósticos: %s sin días en la ventana del gráfico", s["nombre"])
+            continue
+        xs, ys, hv = [], [], []
+        paso = s["frecuencia"] in ("mensual", "semanal")
+        bloques, actual = [], [dias[0]]
+        for d in dias[1:]:  # tramos de días consecutivos (un hueco corta la línea)
+            if (d - actual[-1]).days == 1:
+                actual.append(d)
+            else:
+                bloques.append(actual)
+                actual = [d]
+        bloques.append(actual)
+        for b in bloques:
+            if xs:
+                xs.append(None), ys.append(None), hv.append("")
+            if paso:   # meseta: de 00:00 del primer día a 24:00 del último
+                xs.append(b[0]), ys.append(s["dias"][b[0]]), hv.append(f"{b[0]:%d %b %Y}")
+            for d in b:
+                xs.append(d + pd.Timedelta(hours=12))
+                ys.append(s["dias"][d])
+                hv.append(f"{d:%d %b %Y}")
+            if paso:
+                xs.append(b[-1] + pd.Timedelta(days=1)), ys.append(s["dias"][b[-1]]), hv.append(f"{b[-1]:%d %b %Y}")
+        est = _ESTILO_FREQ[s["frecuencia"]]
+        fig.add_trace(go.Scatter(
+            x=xs, y=ys, mode="lines" if paso else "lines+markers", name=s["nombre"], legend="legend2",
+            line=dict(color=s["color"], **est), marker=dict(size=6, color=s["color"]),
+            connectgaps=False, text=hv,
+            hovertemplate="<b>%{fullData.name}</b> (" + s["frecuencia"] + ")<br>%{text}<br>%{y:.1f} %<extra></extra>"),
+            row=row, col=col)
+        n += 1
+    if n:
+        fig.update_layout(legend2=dict(title=dict(text="Otros pronósticos"), orientation="v", x=0.995,
+                                       xanchor="right", y=0.99, yanchor="top",
+                                       bgcolor="rgba(255,255,255,0.75)", bordercolor="#d9dde3",
+                                       borderwidth=1, font=dict(size=11)))
+    return n

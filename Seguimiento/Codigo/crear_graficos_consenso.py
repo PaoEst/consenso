@@ -36,10 +36,11 @@ import plotly
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 
-from consenso_comun import (ARCHIVO_CONSENSO, ARCHIVO_PRONOSTICO, BASE, CARPETA_CONSOLIDADO,
+from consenso_comun import (ARCHIVO_CONSENSO, ARCHIVO_OTROS, ARCHIVO_PRONOSTICO, BASE, CARPETA_CONSOLIDADO,
                             ESTILO_NAV, SALIDAS, agregar_barras_drivers, altura_panel_drivers,
-                            barra_navegacion, cargar_drivers, carpeta_corrida, drivers_combinados,
+                            agregar_otros_pronosticos, barra_navegacion, cargar_drivers, carpeta_corrida, drivers_combinados,
                             escribir_indice, etiqueta_semana_corta, leer_evaluadores, leer_fechas,
+                            leer_otros_pronosticos,
                             plotly_js, real_a_la_fecha, registrar_cuenca)
 from graficar_aportes import (ARCHIVO_APORTES, ARCHIVO_DRIVERS, C_ABAJO, C_ARRIBA, C_LINEA,
                               configurar_logging, definir_ventana, leer_aportes, log,
@@ -51,7 +52,7 @@ C_PRONOSTICO = "#1f5f8b"
 # --------------------------------------------------------------------------
 # Figura
 # --------------------------------------------------------------------------
-def construir_figura(cuenca, serie, seg, orden_vars, ini, fechas):
+def construir_figura(cuenca, serie, seg, orden_vars, ini, fechas, otros=()):
     hor_ini, hor_fin = fechas["hor_ini"], fechas["hor_fin"]
     x_fin = hor_fin + pd.Timedelta(days=1)
     n = max(len(orden_vars), 1)
@@ -87,6 +88,9 @@ def construir_figura(cuenca, serie, seg, orden_vars, ini, fechas):
     fig.add_trace(go.Scatter(x=[None], y=[None], mode="text", showlegend=False, hoverinfo="skip",
                              textposition="top center",
                              textfont=dict(color=C_PRONOSTICO, size=12)), row=1, col=1)
+
+    # Otros pronósticos (modelos externos) en la zona del pronóstico, con leyenda propia
+    agregar_otros_pronosticos(fig, list(otros), ini, x_fin, row=1)
 
     # Barras de drivers (una fila por variable; seguimiento a la izquierda, pronóstico a la derecha)
     agregar_barras_drivers(fig, seg, orden_vars, row=2)
@@ -324,6 +328,8 @@ def main() -> int:
     ap.add_argument("--drivers", default=BASE / ARCHIVO_DRIVERS, type=Path)
     ap.add_argument("--pronostico", default=BASE / ARCHIVO_PRONOSTICO, type=Path)
     ap.add_argument("--consenso", default=BASE / ARCHIVO_CONSENSO, type=Path)
+    ap.add_argument("--otros", default=BASE / ARCHIVO_OTROS, type=Path,
+                    help="Otros_pronosticos.xlsx (opcional): modelos externos para mostrar junto al pronóstico")
     ap.add_argument("--salida", default=SALIDAS, type=Path, help="carpeta donde se crea año/mes/fecha")
     ap.add_argument("--logs", default=BASE / "logs", type=Path)
     ap.add_argument("--fecha-corrida", default=None, help="AAAA-MM-DD (por defecto: fecha de realización del consenso)")
@@ -339,8 +345,11 @@ def main() -> int:
              pd.__version__, plotly.__version__)
     log.info("Argumentos: %s", {k: str(v) for k, v in vars(args).items()})
     try:
-        for p in (args.aportes, args.drivers, args.pronostico, args.consenso):
+        for p in (args.aportes, args.drivers, args.pronostico, args.consenso, args.otros):
             if not p.exists():
+                if p == args.otros:     # archivo opcional
+                    log.info("Otros pronósticos: no existe %s (opcional); se continúa sin ellos", p)
+                    continue
                 raise FileNotFoundError(f"No se encontró el archivo Excel: {p} (debe estar en la carpeta del script)")
             st = p.stat()
             log.info("Entrada: %s | %d bytes | modificado %s | sha256=%s", p.resolve(), st.st_size,
@@ -358,6 +367,7 @@ def main() -> int:
             ini = fechas["hor_ini"] - pd.Timedelta(days=30)
 
         ctx = cargar_drivers(args.drivers, args.pronostico)
+        otros = leer_otros_pronosticos(args.otros, fechas, [c for c in aportes.columns if c != "Fecha"])
 
         fecha_corrida = (pd.Timestamp(args.fecha_corrida).normalize() if args.fecha_corrida
                          else fechas["consenso"])
@@ -383,7 +393,7 @@ def main() -> int:
             seg, orden_vars = drivers_combinados(cuenca, ctx, ini, fechas["hor_fin"])
             obs = real_a_la_fecha(aportes, cuenca, fechas["hor_ini"])
 
-            fig, il, it = construir_figura(cuenca, serie, seg, orden_vars, ini, fechas)
+            fig, il, it = construir_figura(cuenca, serie, seg, orden_vars, ini, fechas, otros.get(cuenca, []))
             ruta = carpeta / f"Consenso_{nombre_archivo(cuenca)}.html"
             escribir_html(ruta, cuenca, fig, il, it, fechas, evaluadores, obs, carpeta)
             generados.append((cuenca, ruta.name))

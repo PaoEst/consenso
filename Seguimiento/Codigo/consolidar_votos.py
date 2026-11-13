@@ -39,11 +39,12 @@ import plotly
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 
-from consenso_comun import (ARCHIVO_CONSENSO, ARCHIVO_PRONOSTICO, BASE, CARPETA_CONSOLIDADO,
+from consenso_comun import (ARCHIVO_CONSENSO, ARCHIVO_OTROS, ARCHIVO_PRONOSTICO, BASE, CARPETA_CONSOLIDADO,
                             ESTILO_NAV, HOJA_REGISTROS, N_SEMANAS, PREFIJO_CONSOLIDADO, SALIDAS,
-                            agregar_barras_drivers, altura_panel_drivers, barra_navegacion,
+                            agregar_barras_drivers, agregar_otros_pronosticos, altura_panel_drivers, barra_navegacion,
                             cargar_drivers, carpeta_corrida, cuencas_registradas, drivers_combinados,
                             escribir_indice, etiqueta_semana_corta, leer_evaluadores, leer_fechas,
+                            leer_otros_pronosticos,
                             plotly_js, real_a_la_fecha, registrar_cuenca)
 from graficar_aportes import (ARCHIVO_APORTES, ARCHIVO_DRIVERS, C_ABAJO, C_ARRIBA, C_LINEA,
                               configurar_logging, definir_ventana, leer_aportes, log,
@@ -335,7 +336,7 @@ def escribir_hoja_consolidado(wb, filas: list[dict]) -> tuple[int, int]:
 C_ESTAD = "#111111"
 
 
-def construir_consolidado(cuenca, vigentes, serie, seg, orden_vars, fechas, est, evaluadores):
+def construir_consolidado(cuenca, vigentes, serie, seg, orden_vars, fechas, est, evaluadores, otros=()):
     hor_ini, hor_fin = fechas["hor_ini"], fechas["hor_fin"]
     x_fin = hor_fin + pd.Timedelta(days=1)
     semanas = fechas["semanas"]
@@ -405,6 +406,7 @@ def construir_consolidado(cuenca, vigentes, serie, seg, orden_vars, fechas, est,
                              visible=False, hovertemplate="Máximo: %{y:.1f} %<extra></extra>"),
                   row=1, col=1)
 
+    agregar_otros_pronosticos(fig, list(otros), ini, x_fin, row=1)  # modelos externos
     agregar_barras_drivers(fig, seg, orden_vars, row=2)  # drivers climáticos
 
     formas = [dict(type="rect", xref="x", yref="paper", x0=hor_ini, x1=x_fin, y0=0, y1=1,
@@ -518,9 +520,10 @@ def tabla_votos(vigentes, semanas, evaluadores, real_mean) -> str:
 
 
 def escribir_consolidado(ruta, cuenca, ronda, vigentes, historial, serie, seg, orden_vars, fechas,
-                         evaluadores, mes, real_mean, archivo):
+                         evaluadores, mes, real_mean, archivo, otros=()):
     est = historial[ronda]
-    fig, grupos = construir_consolidado(cuenca, vigentes, serie, seg, orden_vars, fechas, est, evaluadores)
+    fig, grupos = construir_consolidado(cuenca, vigentes, serie, seg, orden_vars, fechas, est, evaluadores,
+                                        otros)
     div = fig.to_html(full_html=False, include_plotlyjs=False,
                       config={"displaylogo": False, "responsive": True})
     datos = {
@@ -552,6 +555,8 @@ def main() -> int:
     ap.add_argument("--drivers", default=BASE / ARCHIVO_DRIVERS, type=Path)
     ap.add_argument("--pronostico", default=BASE / ARCHIVO_PRONOSTICO, type=Path)
     ap.add_argument("--consenso", default=BASE / ARCHIVO_CONSENSO, type=Path)
+    ap.add_argument("--otros", default=BASE / ARCHIVO_OTROS, type=Path,
+                    help="Otros_pronosticos.xlsx (opcional): modelos externos para mostrar junto al pronóstico")
     ap.add_argument("--salida", default=SALIDAS, type=Path, help="carpeta donde está año/mes/fecha")
     ap.add_argument("--logs", default=BASE / "logs", type=Path)
     ap.add_argument("--fecha-corrida", default=None, help="AAAA-MM-DD (por defecto: fecha de realización del consenso)")
@@ -568,8 +573,11 @@ def main() -> int:
              pd.__version__, plotly.__version__)
     log.info("Argumentos: %s", {k: str(v) for k, v in vars(args).items()})
     try:
-        for p in (args.aportes, args.drivers, args.pronostico, args.consenso):
+        for p in (args.aportes, args.drivers, args.pronostico, args.consenso, args.otros):
             if not p.exists():
+                if p == args.otros:     # archivo opcional
+                    log.info("Otros pronósticos: no existe %s (opcional); se continúa sin ellos", p)
+                    continue
                 raise FileNotFoundError(f"No se encontró el archivo Excel: {p} (debe estar en la carpeta del script)")
             st = p.stat()
             log.info("Entrada: %s | %d bytes | modificado %s | sha256=%s", p.resolve(), st.st_size,
@@ -594,6 +602,7 @@ def main() -> int:
             ini = fechas["hor_ini"] - pd.Timedelta(days=30)
         cuencas = {c for c in aportes.columns if c != "Fecha"}
         ctx = cargar_drivers(args.drivers, args.pronostico)
+        otros = leer_otros_pronosticos(args.otros, fechas, sorted(cuencas))
 
         votos, rechazados = leer_votos(carpeta_votos, evaluadores, cuencas, mes)
         wb, ws, cols = cargar_registros(args.consenso)
@@ -627,7 +636,7 @@ def main() -> int:
                     log.warning("Cuenca '%s': no hay votos de la ronda %d; se omite", cuenca, r)
                     continue
                 pendientes.append((cuenca, r, vig_por_ronda[r], historial, serie, seg, orden_vars,
-                                   real_mean))
+                                   real_mean, otros.get(cuenca, [])))
 
         # ---- Excel: Registros (votos nuevos) + Consolidado (resultados); una sola escritura
         n_nuevas, n_act = escribir_hoja_consolidado(wb, filas_excel) if filas_excel else (0, 0)
@@ -639,12 +648,12 @@ def main() -> int:
 
         # ---- gráficos Consolidado
         generados = []
-        for cuenca, r, vig, historial, serie, seg, orden_vars, real_mean in pendientes:
+        for cuenca, r, vig, historial, serie, seg, orden_vars, real_mean, otros_c in pendientes:
             archivo = nombre_archivo(cuenca)
             registrar_cuenca(carpeta, archivo, cuenca)
             ruta = carpeta / CARPETA_CONSOLIDADO / f"{PREFIJO_CONSOLIDADO}_{archivo}_Ronda{r}.html"
             escribir_consolidado(ruta, cuenca, r, vig, historial, serie, seg, orden_vars, fechas,
-                                 evaluadores, mes, real_mean, archivo)
+                                 evaluadores, mes, real_mean, archivo, otros_c)
             generados.append((archivo, r, ruta))
             log.info("Consolidado %s ronda %d -> %s | evaluadores=%s | media resto=%.1f cierre=%.1f | real=%s",
                      cuenca, r, ruta.name, [f"{v['evaluador']}(R{v['ronda']})" for v in vig],

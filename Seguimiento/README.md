@@ -11,6 +11,7 @@ Seguimiento/
     consolidar_votos.py            paso 3: registra votos + resultado del consenso + gráfico Consolidado
     graficar_aportes.py            (solo seguimiento, sin votación)  ·  consenso_comun.py (funciones compartidas)
     Seguimiento_Aportes.xlsx, Seguimiento_Drivers.xlsx, Pronostico_Drivers.xlsx, Consenso.xlsx   <- entradas
+    Otros_pronosticos.xlsx                                                       <- entrada opcional (modelos externos)
     requirements.txt, logs/ (bitácora de auditoría y backups/)
   Salidas/                     <- resultados; esta es la carpeta que se comparte (SharePoint)
     <año>/<mes>/<AAAA-MM-DD>/      fecha = "Fecha de realización del consenso" de Consenso.xlsx > Fechas
@@ -91,6 +92,18 @@ rechazan y quedan anotados en el log.
 python graficar_aportes.py
 ```
 Genera `Salidas/Solo_seguimiento/` con un HTML por cuenca y `index.html`.
+
+## Otros pronósticos (opcional): `Codigo/Otros_pronosticos.xlsx`
+Muestra otros modelos en la zona del pronóstico del gráfico de aportes (votación y Consolidado), con una leyenda "Otros pronósticos"
+donde un clic oculta/muestra cada modelo. Si el archivo no existe, todo funciona igual sin ellos. Tres hojas (los nombres deben contener
+"mensual", "semanal" y "diari"); en todas, la primera columna es `Modelo`, la segunda la fecha o semana y desde la tercera una columna por cuenca:
+- `Pronosticos_mensuales` (`Mes_pronosticado`): el valor se repite en **todos los días del mes**.
+- `Pronosticos_semanales` (`Semana_pronosticada` = `S1`..`S5`): el valor se repite en **todos los días de esa semana**, según las fechas de la fila de `Fechas` del consenso en curso.
+- `Pronosticos_diarios` (`dia_pronosticado`): un valor por día; una celda vacía deja un hueco (no se interpola).
+
+Para **agregar un modelo** basta con añadir filas con un nuevo nombre en `Modelo` (puede aparecer en varias hojas; si es así, la leyenda
+agrega "(mensual)", "(semanal)" o "(diario)"). Las columnas se asocian a las cuencas de `Seguimiento_Aportes.xlsx` por nombre; si hay una
+diferencia mínima (p. ej. "Ceunca 2" vs "Cuenca 2") se asocian igual y queda una advertencia en el log. Las columnas que no coinciden se ignoran.
 
 ## Reglas de los gráficos
 - Cada columna de `Aportes %MH` (salvo `Fecha`) es una cuenca; sin datos -> no se grafica. Cuencas nuevas se detectan solas.
