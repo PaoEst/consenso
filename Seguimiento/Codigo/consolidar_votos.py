@@ -39,7 +39,7 @@ import plotly
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 
-from consenso_comun import (ARCHIVO_CONSENSO, ARCHIVO_OTROS, ARCHIVO_PRONOSTICO, BASE, CARPETA_CONSOLIDADO,
+from consenso_comun import (ARCHIVO_CONSENSO, ARCHIVO_OTROS, ARCHIVO_PRONOSTICO, BASE, CARPETA_CONSOLIDADO, INSUMOS,
                             ESTILO_NAV, HOJA_REGISTROS, N_SEMANAS, PREFIJO_CONSOLIDADO, SALIDAS,
                             agregar_barras_drivers, agregar_otros_pronosticos, altura_panel_drivers, barra_navegacion,
                             cargar_drivers, carpeta_corrida, cuencas_registradas, drivers_combinados,
@@ -551,11 +551,11 @@ def escribir_consolidado(ruta, cuenca, ronda, vigentes, historial, serie, seg, o
 # --------------------------------------------------------------------------
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--aportes", default=BASE / ARCHIVO_APORTES, type=Path)
-    ap.add_argument("--drivers", default=BASE / ARCHIVO_DRIVERS, type=Path)
-    ap.add_argument("--pronostico", default=BASE / ARCHIVO_PRONOSTICO, type=Path)
-    ap.add_argument("--consenso", default=BASE / ARCHIVO_CONSENSO, type=Path)
-    ap.add_argument("--otros", default=BASE / ARCHIVO_OTROS, type=Path,
+    ap.add_argument("--aportes", default=INSUMOS / ARCHIVO_APORTES, type=Path)
+    ap.add_argument("--drivers", default=INSUMOS / ARCHIVO_DRIVERS, type=Path)
+    ap.add_argument("--pronostico", default=INSUMOS / ARCHIVO_PRONOSTICO, type=Path)
+    ap.add_argument("--consenso", default=INSUMOS / ARCHIVO_CONSENSO, type=Path)
+    ap.add_argument("--otros", default=INSUMOS / ARCHIVO_OTROS, type=Path,
                     help="Otros_pronosticos.xlsx (opcional): modelos externos para mostrar junto al pronóstico")
     ap.add_argument("--salida", default=SALIDAS, type=Path, help="carpeta donde está año/mes/fecha")
     ap.add_argument("--logs", default=BASE / "logs", type=Path)
@@ -578,7 +578,7 @@ def main() -> int:
                 if p == args.otros:     # archivo opcional
                     log.info("Otros pronósticos: no existe %s (opcional); se continúa sin ellos", p)
                     continue
-                raise FileNotFoundError(f"No se encontró el archivo Excel: {p} (debe estar en la carpeta del script)")
+                raise FileNotFoundError(f"No se encontró el archivo Excel: {p} (los Excel deben estar en la carpeta Insumos)")
             st = p.stat()
             log.info("Entrada: %s | %d bytes | modificado %s | sha256=%s", p.resolve(), st.st_size,
                      datetime.fromtimestamp(st.st_mtime).isoformat(timespec="seconds"), sha256(p))

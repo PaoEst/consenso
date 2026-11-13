@@ -6,13 +6,15 @@ Proyecto independiente para el consenso de expertos sobre los aportes (% de la m
 ```
 Seguimiento/
   README.md
-  Codigo/                      <- todo lo técnico (no se comparte con los evaluadores)
-    crear_graficos_consenso.py     paso 1: genera los gráficos de votación
+  Codigo/                      <- solo programas (no se comparte con los evaluadores)
+    crear_graficos_consenso.py     paso 1: genera los gráficos de votación e informativos
     consolidar_votos.py            paso 3: registra votos + resultado del consenso + gráfico Consolidado
     graficar_aportes.py            (solo seguimiento, sin votación)  ·  consenso_comun.py (funciones compartidas)
-    Seguimiento_Aportes.xlsx, Seguimiento_Drivers.xlsx, Pronostico_Drivers.xlsx, Consenso.xlsx   <- entradas
-    Otros_pronosticos.xlsx                                                       <- entrada opcional (modelos externos)
-    requirements.txt, logs/ (bitácora de auditoría y backups/)
+    requirements.txt, logs/ (bitácora de auditoría y backups/ de Consenso.xlsx)
+  Insumos/                     <- archivos Excel de entrada (se editan aquí)
+    Seguimiento_Aportes.xlsx, Seguimiento_Drivers.xlsx, Pronostico_Drivers.xlsx
+    Consenso.xlsx                  (fechas, evaluadores; aquí se escriben Registros y Consolidado)
+    Otros_pronosticos.xlsx         (opcional: modelos externos)
   Salidas/                     <- resultados; esta es la carpeta que se comparte (SharePoint)
     <año>/<mes>/<AAAA-MM-DD>/      fecha = "Fecha de realización del consenso" de Consenso.xlsx > Fechas
       index.html                   índice: enlaces a cada cuenca (votación y Consolidado)
@@ -21,7 +23,7 @@ Seguimiento/
       votos/                       aquí se dejan los archivos voto_*.json
       consolidado/                 Consolidado_<cuenca>_Ronda<N>.html
 ```
-Los scripts **siempre leen los Excel de la carpeta `Codigo/`**, sin importar desde dónde se ejecuten. Los Excel se editan ahí mismo.
+Los scripts **siempre leen los Excel de la carpeta `Insumos/`** (hermana de `Codigo/`), sin importar desde dónde se ejecuten, y escriben los resultados en `Salidas/`. Los Excel se editan ahí mismo.
 
 ## Instalación en Windows
 
@@ -54,7 +56,7 @@ Los scripts **siempre leen los Excel de la carpeta `Codigo/`**, sin importar des
 - *`PermissionError` o no encuentra el Excel*: cierra los archivos en Excel y confirma que `Seguimiento_Aportes.xlsx` y `Seguimiento_Drivers.xlsx` están junto al script.
 - Ante cualquier error revisa `logs\ejecucion.log`.
 
-## Flujo del consenso (ejecutar dentro de `Codigo/`, con los Excel cerrados)
+## Flujo del consenso (ejecutar dentro de `Codigo/`, con los Excel de `Insumos/` cerrados)
 1. **Preparar los Excel** (seguimiento, pronóstico, `Consenso.xlsx` con `Fechas` y `Evaluadores_Tecnicos`).
 2. **Generar los gráficos de votación:**
    ```
@@ -102,7 +104,7 @@ python graficar_aportes.py
 ```
 Genera `Salidas/Solo_seguimiento/` con un HTML por cuenca y `index.html`.
 
-## Otros pronósticos (opcional): `Codigo/Otros_pronosticos.xlsx`
+## Otros pronósticos (opcional): `Insumos/Otros_pronosticos.xlsx`
 Muestra otros modelos en la zona del pronóstico del gráfico de aportes (votación y Consolidado), con una leyenda "Otros pronósticos"
 donde un clic oculta/muestra cada modelo. Si el archivo no existe, todo funciona igual sin ellos. Tres hojas (los nombres deben contener
 "mensual", "semanal" y "diari"); en todas, la primera columna es `Modelo`, la segunda la fecha o semana y desde la tercera una columna por cuenca:

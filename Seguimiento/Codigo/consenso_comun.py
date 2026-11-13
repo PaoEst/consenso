@@ -11,7 +11,7 @@ import pandas as pd
 from openpyxl.utils import get_column_letter
 import plotly.offline
 
-from graficar_aportes import BASE, SALIDAS, log, norm
+from graficar_aportes import BASE, INSUMOS, SALIDAS, log, norm
 
 ARCHIVO_CONSENSO = "Consenso.xlsx"
 ARCHIVO_PRONOSTICO = "Pronostico_Drivers.xlsx"

@@ -44,7 +44,8 @@ from plotly.subplots import make_subplots
 # --------------------------------------------------------------------------
 # Configuración
 # --------------------------------------------------------------------------
-BASE = Path(__file__).resolve().parent          # carpeta del código (scripts, Excel de entrada, logs)
+BASE = Path(__file__).resolve().parent          # carpeta del código (scripts, logs)
+INSUMOS = BASE.parent / "Insumos"                 # archivos Excel de entrada (y Consenso.xlsx)
 SALIDAS = BASE.parent / "Salidas"                 # resultados: Salidas/<año>/<mes>/<fecha>/
 ARCHIVO_APORTES = "Seguimiento_Aportes.xlsx"
 ARCHIVO_DRIVERS = "Seguimiento_Drivers.xlsx"
@@ -470,8 +471,8 @@ def construir_figura(cuenca: str, serie: pd.DataFrame, seg: pd.DataFrame,
 # --------------------------------------------------------------------------
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--aportes", default=BASE / ARCHIVO_APORTES, type=Path)
-    ap.add_argument("--drivers", default=BASE / ARCHIVO_DRIVERS, type=Path)
+    ap.add_argument("--aportes", default=INSUMOS / ARCHIVO_APORTES, type=Path)
+    ap.add_argument("--drivers", default=INSUMOS / ARCHIVO_DRIVERS, type=Path)
     ap.add_argument("--salida", default=SALIDAS / "Solo_seguimiento", type=Path)
     ap.add_argument("--logs", default=BASE / "logs", type=Path)
     args = ap.parse_args()
@@ -489,7 +490,7 @@ def main() -> int:
     try:
         for p in (args.aportes, args.drivers):
             if not p.exists():
-                raise FileNotFoundError(f"No se encontró el archivo Excel: {p} (debe estar en la carpeta del script)")
+                raise FileNotFoundError(f"No se encontró el archivo Excel: {p} (los Excel deben estar en la carpeta Insumos)")
             st = p.stat()
             log.info("Entrada: %s | %d bytes | modificado %s | sha256=%s", p.resolve(), st.st_size,
                      datetime.fromtimestamp(st.st_mtime).isoformat(timespec="seconds"), sha256(p))
