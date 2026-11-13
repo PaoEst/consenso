@@ -17,6 +17,7 @@ Seguimiento/
     <año>/<mes>/<AAAA-MM-DD>/      fecha = "Fecha de realización del consenso" de Consenso.xlsx > Fechas
       index.html                   índice: enlaces a cada cuenca (votación y Consolidado)
       Consenso_<cuenca>.html       gráfico de votación
+      informativo/                 Informativo_<cuenca>.html: mismas gráficas pero SIN votación (solo consulta)
       votos/                       aquí se dejan los archivos voto_*.json
       consolidado/                 Consolidado_<cuenca>_Ronda<N>.html
 ```
@@ -69,6 +70,9 @@ Los scripts **siempre leen los Excel de la carpeta `Codigo/`**, sin importar des
    - *Real a la fecha*: promedio de los aportes con dato del mes del inicio del pronóstico (vacío si aún no hay datos).
    - *Esperado resto del mes*: promedio de las semanas ponderado por sus días (fechas de `Consenso.xlsx > Fechas`).
    - *Cierre del mes*: promedio de todos los días del mes (observados + pronosticados).
+   - El resto del mes y el cierre cuentan solo los días de cada semana que caen dentro del **mes del inicio del pronóstico**
+     (una semana que cruza de mes, p. ej. 26 nov – 2 dic, pesa solo los días de noviembre). Las semanas de `Fechas` que queden
+     totalmente fuera del horizonte no se muestran ni se votan (queda una advertencia en el log).
 4. **Registrar y consolidar** (una sola corrida):
    ```
    python consolidar_votos.py            # todas las rondas existentes
@@ -86,6 +90,11 @@ Notas: antes de escribir, `Consenso.xlsx` se copia a `logs/backups/`; si está a
 Al guardar, el archivo pierde los valores calculados guardados de sus fórmulas (Excel los recalcula al abrirlo; los scripts
 evalúan las fórmulas de `Fechas` por su cuenta). Los votos con evaluador no autorizado, mes distinto o datos inválidos se
 rechazan y quedan anotados en el log.
+
+## Páginas informativas (sin votación)
+`crear_graficos_consenso.py` genera además, en la misma corrida, `Salidas/<año>/<mes>/<fecha>/informativo/Informativo_<cuenca>.html`:
+seguimiento de aportes y de drivers, drivers pronosticados, otros modelos de aportes (`Otros_pronosticos.xlsx`) y leyenda, **sin** cajones
+de voto ni GUARDAR. Están enlazadas desde `index.html` y desde cada página de votación. Para omitirlas: `python crear_graficos_consenso.py --sin-informativo`.
 
 ## Solo seguimiento (`graficar_aportes.py`)
 ```

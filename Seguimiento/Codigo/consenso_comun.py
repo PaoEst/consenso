@@ -96,15 +96,25 @@ def leer_fechas(ruta: Path) -> dict:
             continue
         if ini > fin:
             raise ValueError(f"Hoja Fechas: S{k + 1} tiene inicio posterior al fin")
+        if fin < out["hor_ini"] or ini > out["hor_fin"]:
+            log.warning("Fechas: S%d (%s -> %s) queda totalmente fuera del horizonte (%s -> %s); no se vota",
+                        k + 1, ini.date(), fin.date(), out["hor_ini"].date(), out["hor_fin"].date())
+            continue
         if ini < out["hor_ini"] or fin > out["hor_fin"]:
-            log.warning("Fechas: S%d (%s -> %s) cae fuera del horizonte (%s -> %s)", k + 1,
+            log.warning("Fechas: S%d (%s -> %s) sobresale del horizonte (%s -> %s)", k + 1,
                         ini.date(), fin.date(), out["hor_ini"].date(), out["hor_fin"].date())
-        out["semanas"].append({"n": k + 1, "ini": ini, "fin": fin, "dias": (fin - ini).days + 1})
+        # días de la semana dentro del MES del inicio del horizonte (resto del mes y cierre no mezclan meses)
+        m_ini = out["hor_ini"].replace(day=1)
+        m_fin = m_ini + pd.offsets.MonthEnd(0)
+        ini_m, fin_m = max(ini, m_ini), min(fin, m_fin)
+        dias_mes = max((fin_m - ini_m).days + 1, 0)
+        out["semanas"].append({"n": k + 1, "ini": ini, "fin": fin, "dias": (fin - ini).days + 1,
+                               "dias_mes": dias_mes})
     if not out["semanas"]:
-        raise ValueError("Hoja Fechas: no hay ninguna semana definida")
+        raise ValueError("Hoja Fechas: no hay ninguna semana dentro del horizonte")
     log.info("Fechas: consenso=%s horizonte=%s -> %s semanas=%s", out["consenso"].date(),
              out["hor_ini"].date(), out["hor_fin"].date(),
-             [(s["n"], str(s["ini"].date()), str(s["fin"].date()), s["dias"]) for s in out["semanas"]])
+             [(s["n"], str(s["ini"].date()), str(s["fin"].date()), s["dias"], s["dias_mes"]) for s in out["semanas"]])
     return out
 
 
@@ -149,6 +159,8 @@ from graficar_aportes import (ARCHIVO_APORTES, ARCHIVO_DRIVERS, AZUL, NEUTRO, OC
 
 ARCHIVO_INDICE = "indice_cuencas.json"   # archivo -> nombre de cuenca (para el índice/selector)
 CARPETA_CONSOLIDADO = "consolidado"
+CARPETA_INFORMATIVO = "informativo"       # páginas sin votación (solo consulta)
+PREFIJO_INFORMATIVO = "Informativo"
 PREFIJO_CONSOLIDADO = "Consolidado"
 
 
@@ -289,13 +301,15 @@ def cuencas_registradas(carpeta: Path) -> dict[str, str]:
 
 
 def barra_navegacion(carpeta: Path, actual: str, donde: str, ronda: int | None = None) -> str:
-    """HTML de la barra superior: enlace al índice y selector de cuenca (y de ronda).
+    """HTML de la barra superior: enlace al índice, selector de cuenca (y de ronda) y enlaces cruzados.
 
-    donde = 'votacion' (página en la carpeta de corrida) | 'consolidado' (en carpeta/consolidado/)."""
+    donde = 'votacion' (carpeta de corrida) | 'consolidado' (carpeta/consolidado/) |
+            'informativo' (carpeta/informativo/, sin votación)."""
     cuencas = cuencas_registradas(carpeta)
     en_cons = donde == "consolidado"
+    en_info = donde == "informativo"
     ruta_cons = carpeta / CARPETA_CONSOLIDADO
-    prefijo = "../" if en_cons else ""
+    prefijo = "../" if (en_cons or en_info) else ""
     opciones = []
     for archivo, nombre in cuencas.items():
         if en_cons:
@@ -308,6 +322,10 @@ def barra_navegacion(carpeta: Path, actual: str, donde: str, ronda: int | None =
                 continue
             r_dest = ronda if ronda in disp else max([r for r in disp if r < ronda] or [disp[0]])
             destino = f"{PREFIJO_CONSOLIDADO}_{archivo}_Ronda{r_dest}.html"
+        elif en_info:
+            destino = f"{PREFIJO_INFORMATIVO}_{archivo}.html"
+            if not (carpeta / CARPETA_INFORMATIVO / destino).exists():
+                continue
         else:
             destino = f"Consenso_{archivo}.html"
             if not (carpeta / destino).exists():
@@ -325,6 +343,10 @@ def barra_navegacion(carpeta: Path, actual: str, donde: str, ronda: int | None =
             ops = "".join(f'<option value="{PREFIJO_CONSOLIDADO}_{actual}_Ronda{r}.html"'
                           f'{" selected" if r == ronda else ""}>Ronda {r}</option>' for r in rondas)
             partes.append(f'<label>Ronda <select onchange="location.href=this.value">{ops}</select></label>')
+    if en_info and (carpeta / f"Consenso_{actual}.html").exists():
+        partes.append(f'<a href="../Consenso_{html.escape(actual)}.html">Ir a la votación ›</a>')
+    if donde == "votacion" and (carpeta / CARPETA_INFORMATIVO / f"{PREFIJO_INFORMATIVO}_{actual}.html").exists():
+        partes.append(f'<a href="{CARPETA_INFORMATIVO}/{PREFIJO_INFORMATIVO}_{html.escape(actual)}.html">Ver informativo (sin votación) ›</a>')
     return '<nav class="nav">' + "".join(partes) + "</nav>"
 
 
@@ -342,6 +364,8 @@ def escribir_indice(carpeta: Path, fechas: dict) -> Path:
         if not (carpeta / f"Consenso_{archivo}.html").exists():
             continue
         enlaces = [f'<a href="Consenso_{html.escape(archivo)}.html">Votación</a>']
+        if (carpeta / CARPETA_INFORMATIVO / f"{PREFIJO_INFORMATIVO}_{archivo}.html").exists():
+            enlaces.append(f'<a href="{CARPETA_INFORMATIVO}/{PREFIJO_INFORMATIVO}_{html.escape(archivo)}.html">Informativo</a>')
         for f in sorted((carpeta / CARPETA_CONSOLIDADO).glob(f"{PREFIJO_CONSOLIDADO}_{archivo}_Ronda*.html")):
             m = re.search(r"Ronda(\d+)\.html$", f.name)
             enlaces.append(f'<a href="{CARPETA_CONSOLIDADO}/{html.escape(f.name)}">Consolidado ronda {m.group(1)}</a>')
