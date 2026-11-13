@@ -9,6 +9,7 @@ Seguimiento/
   Codigo/                      <- solo programas (no se comparte con los evaluadores)
     crear_graficos_consenso.py     paso 1: genera los gráficos de votación e informativos
     consolidar_votos.py            paso 3: registra votos + resultado del consenso + gráfico Consolidado
+    evaluacion.py                  evalúa por semana los consensos marcados SI (hoja Evaluación); corre sola al final del paso 1
     graficar_aportes.py            (solo seguimiento, sin votación)  ·  consenso_comun.py (funciones compartidas)
     requirements.txt, logs/ (bitácora de auditoría y backups/ de Consenso.xlsx)
   Insumos/                     <- archivos Excel de entrada (se editan aquí)
@@ -58,6 +59,9 @@ Los scripts **siempre leen los Excel de la carpeta `Insumos/`** (hermana de `Cod
 
 ## Flujo del consenso (ejecutar dentro de `Codigo/`, con los Excel de `Insumos/` cerrados)
 1. **Preparar los Excel** (seguimiento, pronóstico, `Consenso.xlsx` con `Fechas` y `Evaluadores_Tecnicos`).
+   Cada consenso es **una fila nueva** en la hoja `Fechas` (queda el historial); los scripts usan la **última fila**. Para trabajar con un
+   consenso anterior: `--fecha-corrida AAAA-MM-DD` (fila cuya "Fecha de realización del consenso" coincide). Las semanas S1..S5 que
+   queden totalmente fuera del horizonte, o con inicio posterior al fin, se ignoran con una advertencia en el log.
 2. **Generar los gráficos de votación:**
    ```
    python crear_graficos_consenso.py
@@ -81,9 +85,11 @@ Los scripts **siempre leen los Excel de la carpeta `Insumos/`** (hermana de `Cod
    python consolidar_votos.py --ronda 2  # solo los gráficos de una ronda
    ```
    - Agrega cada voto nuevo a `Consenso.xlsx > Registros` (columnas `Mes_pronostico` e `Id_voto` al final; no duplica).
-   - Escribe el resultado en la hoja **`Consolidado`**: por cada cuenca y ronda, 3 filas (`Estadístico` = Media, Mediana, Rango),
-     con `No Evaluación` = ronda y `Evaluador` = iniciales de los votos considerados separadas por comas. En Rango las celdas
-     son texto "mín - máx". Si se vuelve a correr, las filas se actualizan sin duplicarse.
+   - Escribe el resultado en la hoja **`Consolidado`**, con 3 filas (`Estadístico` = Media, Mediana, Rango) por cuenca y ronda y estas columnas:
+     `Mes_pronostico`, `Fecha_consenso` (fecha sin hora), `Cuenca`, `No Evaluación` (= ronda), `Evaluador` (iniciales de los votos considerados, separadas
+     por comas), `Aportes S1..S5`, `Real a la fecha`, `Aportes_resto del mes`, `Aportes cierre de mes`, `Estadístico` y **`Consenso`**. En Rango las celdas
+     son texto "mín - máx". Si se vuelve a correr, las filas se actualizan sin duplicarse y **la columna `Consenso` nunca se toca**: ahí escribes `SI`
+     en la fila elegida tras la segunda ronda (lista desplegable SI/NO). Un `Consolidado` con el formato anterior se migra solo.
    - Genera `consolidado/Consolidado_<cuenca>_Ronda<N>.html`: línea por evaluador, drivers climáticos, botones **Media / Mediana /
      Rango** que actualizan gráfico, recuadros (real, esperado resto, cierre), fila de totales y la tabla de trazabilidad por rondas.
    - En la ronda N cada evaluador cuenta con su voto más reciente de ronda <= N (si no volvió a votar, se mantiene el anterior).
@@ -92,6 +98,24 @@ Notas: antes de escribir, `Consenso.xlsx` se copia a `logs/backups/`; si está a
 Al guardar, el archivo pierde los valores calculados guardados de sus fórmulas (Excel los recalcula al abrirlo; los scripts
 evalúan las fórmulas de `Fechas` por su cuenta). Los votos con evaluador no autorizado, mes distinto o datos inválidos se
 rechazan y quedan anotados en el log.
+
+## Evaluación semanal (hoja `Evaluación`)
+Cuando generas los gráficos del siguiente consenso (`crear_graficos_consenso.py`) —o con `python evaluacion.py`— se evalúan los consensos de `Consolidado`
+con `Consenso = SI`. Un SI por cuenca y fecha de consenso (si hay más, se usa la ronda mayor; una fila marcada en `Rango` se omite: no es un valor puntual).
+Cada semana (fechas de la fila de `Fechas` de ese consenso) se compara con los aportes observados de `Seguimiento_Aportes`, usando solo los días con dato.
+Formato largo, una fila por semana y métrica: `Fecha_consenso`, `Cuenca`, `No Evaluación`, `Evaluador`, `horizonte` (S1..S5), `fecha_inicio_horizonte`,
+`fecha_fin_horizonte`, `Valor_pronos`, `Valor_real`, `Metrica_desempeño`, `Valor_Metrica`, y además `Estadístico`, `Dias_evaluados`, `Dias_semana`, `Estado`,
+`Fecha_corte` (último dato observado) y `Fecha_evaluacion`.
+
+Con P = valor pronosticado de la semana (el mismo para todos sus días) y Od = observado de cada día:
+- **MAPE** = 100 · media(|P − Od| / Od), solo días con Od > 0 (los días con 0 se excluyen y quedan en el log).
+- **MSE** = media((P − Od)²).
+- **FB** (sesgo fraccional) = 2 · (Ō − P) / (Ō + P); **positivo = el pronóstico subestima**, negativo = sobreestima.
+
+`Estado`: `Parcial` mientras el último dato observado sea anterior al fin de la semana (se recalcula en cada corrida); `Evaluada` cuando la semana ya cerró
+(la fila se congela; `python evaluacion.py --reevaluar` la recalcula). Para juntar varias semanas (p. ej. un mes) pondera por `Dias_evaluados`:
+MSE = Σ(MSE·días)/Σ días y RMSE = √MSE; igual para MAPE. Si la evaluación falla (p. ej. `Consenso.xlsx` abierto en Excel), los gráficos se generan igual
+y queda un aviso en pantalla y en el log (`--sin-evaluacion` la omite).
 
 ## Páginas informativas (sin votación)
 `crear_graficos_consenso.py` genera además, en la misma corrida, `Salidas/<año>/<mes>/<fecha>/informativo/Informativo_<cuenca>.html`:

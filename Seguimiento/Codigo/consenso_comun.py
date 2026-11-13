@@ -29,10 +29,10 @@ def fecha_corta(f: pd.Timestamp) -> str:
 
 
 def etiqueta_semana_corta(s: dict) -> str:
-    """'01-07 nov' o '28 oct - 03 nov' para los rótulos de semana."""
+    """'01-07 nov' o, si cruza de mes, '26 nov–2 dic' (corto para que quepa en una sola línea)."""
     if s["ini"].month == s["fin"].month:
         return f"{s['ini'].day:02d}-{fecha_corta(s['fin'])}"
-    return f"{fecha_corta(s['ini'])} - {fecha_corta(s['fin'])}"
+    return f"{s['ini'].day} {MESES[s['ini'].month - 1][:3]}–{s['fin'].day} {MESES[s['fin'].month - 1][:3]}"
 
 
 def _fecha(v):
@@ -74,35 +74,43 @@ def _valor_celda(ws_f, ws_v, coord: str, profundidad: int = 0):
     return datetime.fromordinal(int(round(total))) if fecha else total
 
 
-def leer_fechas(ruta: Path) -> dict:
-    """Hoja Fechas (fila 2): consenso, horizonte y semanas S1..S5 (inicio/fin)."""
-    wb_f = openpyxl.load_workbook(ruta)
-    wb_v = openpyxl.load_workbook(ruta, data_only=True)
-    if HOJA_FECHAS not in wb_f.sheetnames:
-        raise ValueError(f"{ruta.name} no tiene la hoja '{HOJA_FECHAS}'")
-    ws_f, ws_v = wb_f[HOJA_FECHAS], wb_v[HOJA_FECHAS]
-    v = [_valor_celda(ws_f, ws_v, f"{get_column_letter(c)}2") for c in range(1, 5 + 2 * N_SEMANAS)]
-    out = {"seguimiento_ini": _fecha(v[0]), "consenso": _fecha(v[1]),
+def _filas_fechas(ws_f, ws_v) -> list[int]:
+    """Filas de la hoja Fechas con un consenso (columna B con fecha o fórmula), en orden."""
+    filas = []
+    for r in range(2, ws_f.max_row + 1):
+        if ws_v.cell(r, 2).value not in (None, "") or ws_f.cell(r, 2).value not in (None, ""):
+            filas.append(r)
+    return filas
+
+
+def _parsear_fila_fechas(ws_f, ws_v, fila: int, silencioso: bool = False) -> dict:
+    """Fecha del consenso, horizonte y semanas S1..S5 (inicio/fin) de una fila de la hoja Fechas."""
+    aviso = log.debug if silencioso else log.warning
+    info = log.debug if silencioso else log.info
+    v = [_valor_celda(ws_f, ws_v, f"{get_column_letter(c)}{fila}") for c in range(1, 5 + 2 * N_SEMANAS)]
+    out = {"fila": fila, "seguimiento_ini": _fecha(v[0]), "consenso": _fecha(v[1]),
            "hor_ini": _fecha(v[2]), "hor_fin": _fecha(v[3]), "semanas": []}
     for faltante in ("consenso", "hor_ini", "hor_fin"):
         if out[faltante] is None:
-            raise ValueError(f"Hoja '{HOJA_FECHAS}': falta o es ilegible la fecha '{faltante}'")
+            raise ValueError(f"Hoja '{HOJA_FECHAS}' fila {fila}: falta o es ilegible la fecha '{faltante}'")
     if out["hor_ini"] > out["hor_fin"]:
-        raise ValueError("Hoja Fechas: el inicio del horizonte es posterior a su fin")
+        raise ValueError(f"Hoja Fechas fila {fila}: el inicio del horizonte es posterior a su fin")
     for k in range(N_SEMANAS):
         ini, fin = _fecha(v[4 + 2 * k]), _fecha(v[5 + 2 * k])
         if ini is None or fin is None:
-            log.info("Fechas: S%d sin fechas completas; no se usa", k + 1)
+            info("Fechas fila %d: S%d sin fechas completas; no se usa", fila, k + 1)
             continue
-        if ini > fin:
-            raise ValueError(f"Hoja Fechas: S{k + 1} tiene inicio posterior al fin")
+        if ini > fin:   # p. ej. cadena de fórmulas que se pasa del fin del horizonte: la semana no existe
+            aviso("Fechas fila %d: S%d tiene inicio (%s) posterior al fin (%s); no se usa", fila, k + 1,
+                  ini.date(), fin.date())
+            continue
         if fin < out["hor_ini"] or ini > out["hor_fin"]:
-            log.warning("Fechas: S%d (%s -> %s) queda totalmente fuera del horizonte (%s -> %s); no se vota",
-                        k + 1, ini.date(), fin.date(), out["hor_ini"].date(), out["hor_fin"].date())
+            aviso("Fechas fila %d: S%d (%s -> %s) queda totalmente fuera del horizonte (%s -> %s); no se vota",
+                  fila, k + 1, ini.date(), fin.date(), out["hor_ini"].date(), out["hor_fin"].date())
             continue
         if ini < out["hor_ini"] or fin > out["hor_fin"]:
-            log.warning("Fechas: S%d (%s -> %s) sobresale del horizonte (%s -> %s)", k + 1,
-                        ini.date(), fin.date(), out["hor_ini"].date(), out["hor_fin"].date())
+            aviso("Fechas fila %d: S%d (%s -> %s) sobresale del horizonte (%s -> %s)", fila, k + 1,
+                  ini.date(), fin.date(), out["hor_ini"].date(), out["hor_fin"].date())
         # días de la semana dentro del MES del inicio del horizonte (resto del mes y cierre no mezclan meses)
         m_ini = out["hor_ini"].replace(day=1)
         m_fin = m_ini + pd.offsets.MonthEnd(0)
@@ -111,11 +119,86 @@ def leer_fechas(ruta: Path) -> dict:
         out["semanas"].append({"n": k + 1, "ini": ini, "fin": fin, "dias": (fin - ini).days + 1,
                                "dias_mes": dias_mes})
     if not out["semanas"]:
-        raise ValueError("Hoja Fechas: no hay ninguna semana dentro del horizonte")
-    log.info("Fechas: consenso=%s horizonte=%s -> %s semanas=%s", out["consenso"].date(),
-             out["hor_ini"].date(), out["hor_fin"].date(),
+        raise ValueError(f"Hoja Fechas fila {fila}: no hay ninguna semana dentro del horizonte")
+    return out
+
+
+def _abrir_fechas(ruta: Path):
+    wb_f = openpyxl.load_workbook(ruta)
+    wb_v = openpyxl.load_workbook(ruta, data_only=True)
+    if HOJA_FECHAS not in wb_f.sheetnames:
+        raise ValueError(f"{ruta.name} no tiene la hoja '{HOJA_FECHAS}'")
+    return wb_f[HOJA_FECHAS], wb_v[HOJA_FECHAS]
+
+
+def leer_fechas(ruta: Path, fecha=None) -> dict:
+    """Datos del consenso en curso. Cada consenso es una FILA de la hoja Fechas (historial);
+    por defecto se usa la última fila con datos. Con `fecha` (AAAA-MM-DD) se usa la fila cuya
+    'Fecha de realización del consenso' coincide (la última si hay repetidas)."""
+    ws_f, ws_v = _abrir_fechas(ruta)
+    filas = _filas_fechas(ws_f, ws_v)
+    if not filas:
+        raise ValueError(f"La hoja '{HOJA_FECHAS}' no tiene ninguna fila de consenso")
+    if fecha is None:
+        fila = filas[-1]
+        motivo = "última fila con datos"
+    else:
+        objetivo = pd.Timestamp(fecha).normalize()
+        cand = []
+        for r in filas:
+            try:
+                if _fecha(_valor_celda(ws_f, ws_v, f"B{r}")) == objetivo:
+                    cand.append(r)
+            except ValueError:
+                continue
+        if not cand:
+            raise ValueError(f"La hoja '{HOJA_FECHAS}' no tiene un consenso con fecha {objetivo.date()}")
+        fila = cand[-1]
+        motivo = f"fila con fecha de consenso {objetivo.date()}"
+    out = _parsear_fila_fechas(ws_f, ws_v, fila)
+    log.info("Fechas: usando el consenso %d de %d (fila %d de la hoja; %s): consenso=%s horizonte=%s -> %s semanas=%s",
+             filas.index(fila) + 1, len(filas), fila, motivo, out["consenso"].date(), out["hor_ini"].date(), out["hor_fin"].date(),
              [(s["n"], str(s["ini"].date()), str(s["fin"].date()), s["dias"], s["dias_mes"]) for s in out["semanas"]])
     return out
+
+
+def leer_todas_fechas(ruta: Path) -> dict:
+    """{Timestamp fecha_consenso: datos de esa fila} con todo el historial de la hoja Fechas.
+    Filas ilegibles se saltan con una advertencia; si una fecha se repite, gana la última fila."""
+    ws_f, ws_v = _abrir_fechas(ruta)
+    out = {}
+    for r in _filas_fechas(ws_f, ws_v):
+        try:
+            d = _parsear_fila_fechas(ws_f, ws_v, r, silencioso=True)
+        except ValueError as e:
+            log.warning("Fechas: fila %d ignorada en el historial: %s", r, e)
+            continue
+        if d["consenso"] in out:
+            log.warning("Fechas: la fecha de consenso %s está repetida (filas %d y %d); se usa la última",
+                        d["consenso"].date(), out[d["consenso"]]["fila"], r)
+        out[d["consenso"]] = d
+    log.info("Fechas: historial de %d consensos: %s", len(out), [str(k.date()) for k in sorted(out)])
+    return out
+
+
+def guardar_excel(wb, ruta: Path, dir_logs: Path) -> None:
+    """Copia de seguridad (dir_logs/backups) + guardado atómico del libro."""
+    import os
+    import shutil
+    dir_bk = dir_logs / "backups"
+    dir_bk.mkdir(parents=True, exist_ok=True)
+    bk = dir_bk / f"{ruta.stem}_{datetime.now():%Y%m%d_%H%M%S}{ruta.suffix}"
+    shutil.copy2(ruta, bk)
+    log.info("Copia de seguridad: %s", bk.resolve())
+    tmp = ruta.with_name(ruta.stem + ".tmp" + ruta.suffix)
+    wb.save(tmp)
+    try:
+        os.replace(tmp, ruta)
+    except PermissionError:
+        tmp.unlink(missing_ok=True)
+        raise PermissionError(f"No se pudo escribir {ruta.name}: ciérralo en Excel y vuelve a correr "
+                              f"(no se guardó nada; la copia {bk.name} no cambió nada).")
+    log.info("Guardado %s", ruta.resolve())
 
 
 def leer_evaluadores(ruta: Path) -> dict[str, str]:

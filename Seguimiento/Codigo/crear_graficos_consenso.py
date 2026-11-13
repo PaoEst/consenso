@@ -151,11 +151,15 @@ input:disabled{border-color:var(--brd);background:var(--card);cursor:not-allowed
 #guardar{background:#d62728;color:#fff;border:0;border-radius:6px;padding:9px 22px;font-weight:700;letter-spacing:.5px;cursor:pointer}
 #guardar:disabled{background:var(--brd);color:var(--sub);cursor:not-allowed}
 #main{display:flex;gap:16px;padding:10px 20px 20px}
-#izq{flex:1 1 auto;min-width:0} #der{flex:0 0 220px;display:flex;flex-direction:column;gap:12px;padding-top:70px}
-#semrow{position:relative;height:74px}
-.sem{position:absolute;top:0;width:58px;text-align:center;font-size:11px;line-height:1.25;color:var(--sub);transform:translateX(-50%)}
-.sem b{display:block;color:var(--txt);font-size:13px}
-.sem input{width:58px;margin-top:4px;padding:6px 2px}
+#izq{flex:1 1 auto;min-width:0} #der{flex:0 0 220px;display:flex;flex-direction:column;gap:12px;padding-top:84px}
+#izq{position:relative}
+#semrow{position:relative;height:84px;z-index:3}
+.sem{position:absolute;top:0;width:46px;text-align:center;transform:translateX(-50%)}
+.sem b{display:block;color:var(--txt);font-size:13px;line-height:16px;height:16px}
+.sem .et{display:block;width:96px;margin:0 -25px;height:15px;line-height:15px;font-size:10.5px;color:var(--sub);white-space:nowrap}
+.sem input{width:46px;height:30px;margin-top:6px;padding:0 2px;font-size:14px;-moz-appearance:textfield}
+.sem input::-webkit-outer-spin-button,.sem input::-webkit-inner-spin-button{-webkit-appearance:none;margin:0}
+#grafico{position:relative;z-index:1}
 .card{background:var(--card);border:1px solid var(--brd);border-radius:8px;padding:10px 12px;font-size:13px;color:var(--sub)}
 .card input{width:100%;margin-top:6px;font-size:16px}
 .valor{margin-top:6px;border:2px solid var(--brd);border-radius:6px;padding:6px;text-align:center;font-size:16px;color:var(--txt);background:var(--bg);min-height:36px}
@@ -190,7 +194,7 @@ const num = s => { s=(s||'').toString().replace(',','.').trim(); if(s==='') retu
 // ---- cuadros por semana, alineados al eje de fechas del gráfico
 D.semanas.forEach(s => {
   const div = document.createElement('div'); div.className='sem'; div.dataset.n=s.n;
-  div.innerHTML = '<b>S'+s.n+'</b>'+s.etiqueta+'<input type="number" min="0" step="any" disabled>';
+  div.innerHTML = '<b>S'+s.n+'</b><span class="et">'+s.etiqueta+'</span><input type="number" min="0" step="any" disabled>';
   $('semrow').appendChild(div);
   const inp = div.querySelector('input'); inp.dataset.n=s.n; semInputs.push(inp);
   inp.addEventListener('input', () => recalcular('semana'));
@@ -390,6 +394,8 @@ def main() -> int:
                     help="Otros_pronosticos.xlsx (opcional): modelos externos para mostrar junto al pronóstico")
     ap.add_argument("--salida", default=SALIDAS, type=Path, help="carpeta donde se crea año/mes/fecha")
     ap.add_argument("--logs", default=BASE / "logs", type=Path)
+    ap.add_argument("--sin-evaluacion", action="store_true",
+                    help="no evaluar (hoja Evaluación) los consensos marcados SI al terminar")
     ap.add_argument("--sin-informativo", action="store_true",
                     help="no generar las páginas de consulta sin votación (carpeta informativo/)")
     ap.add_argument("--fecha-corrida", default=None, help="AAAA-MM-DD (por defecto: fecha de realización del consenso)")
@@ -415,7 +421,7 @@ def main() -> int:
             log.info("Entrada: %s | %d bytes | modificado %s | sha256=%s", p.resolve(), st.st_size,
                      datetime.fromtimestamp(st.st_mtime).isoformat(timespec="seconds"), sha256(p))
 
-        fechas = leer_fechas(args.consenso)
+        fechas = leer_fechas(args.consenso, args.fecha_corrida)
         evaluadores = leer_evaluadores(args.consenso)
         if not evaluadores:
             raise ValueError("Consenso.xlsx > Evaluadores_Tecnicos no tiene evaluadores")
@@ -497,6 +503,17 @@ def main() -> int:
                 ruta.write_text(re.sub(r'<nav class="nav">.*?</nav>', lambda m: nav_v, txt, count=1, flags=re.S),
                                 encoding="utf-8")
         escribir_indice(carpeta, fechas)
+
+        # Evaluación semanal de los consensos marcados SI (no bloquea los gráficos si falla)
+        if not args.sin_evaluacion:
+            try:
+                from evaluacion import evaluar
+                cont = evaluar(args.consenso, args.aportes, args.logs)
+                print(f"Evaluación: {cont['nuevas']} filas nuevas, {cont['actualizadas']} actualizadas, "
+                      f"{cont['congeladas']} congeladas")
+            except Exception as e:
+                log.exception("Evaluación no realizada (los gráficos ya se generaron)")
+                print(f"AVISO: no se pudo actualizar la hoja Evaluación: {e}")
 
         log.info("RESUMEN: generados=%d %s | omitidos=%d %s", len(generados),
                  [c for c, _ in generados], len(omitidos), omitidos)

@@ -34,6 +34,8 @@ from datetime import datetime
 from pathlib import Path
 
 import openpyxl
+import openpyxl.utils
+from openpyxl.worksheet.datavalidation import DataValidation
 import pandas as pd
 import plotly
 import plotly.graph_objects as go
@@ -43,9 +45,9 @@ from consenso_comun import (ARCHIVO_CONSENSO, ARCHIVO_OTROS, ARCHIVO_PRONOSTICO,
                             ESTILO_NAV, HOJA_REGISTROS, N_SEMANAS, PREFIJO_CONSOLIDADO, SALIDAS,
                             agregar_barras_drivers, agregar_otros_pronosticos, altura_panel_drivers, barra_navegacion,
                             cargar_drivers, carpeta_corrida, cuencas_registradas, drivers_combinados,
-                            escribir_indice, etiqueta_semana_corta, leer_evaluadores, leer_fechas,
+                            escribir_indice, etiqueta_semana_corta, leer_evaluadores, leer_fechas, leer_todas_fechas,
                             leer_otros_pronosticos,
-                            plotly_js, real_a_la_fecha, registrar_cuenca)
+                            plotly_js, real_a_la_fecha, registrar_cuenca, guardar_excel)
 from graficar_aportes import (ARCHIVO_APORTES, ARCHIVO_DRIVERS, C_ABAJO, C_ARRIBA, C_LINEA,
                               configurar_logging, definir_ventana, leer_aportes, log,
                               nombre_archivo, norm, relleno_media, sha256)
@@ -55,7 +57,10 @@ COLUMNAS_BASE = ["Fecha_hora_registro", "No Evaluación", "Cuenca", "Evaluador",
                  "Aportes_resto del mes", "Aportes cierre de mes"]
 COLUMNAS_EXTRA = ["Mes_pronostico", "Id_voto"]
 HOJA_CONSOLIDADO = "Consolidado"
-COLUMNAS_CONSOLIDADO = COLUMNAS_BASE + ["Estadístico", "Mes_pronostico"]
+COLUMNAS_CONSOLIDADO = (["Mes_pronostico", "Fecha_consenso", "Cuenca", "No Evaluación", "Evaluador"]
+                        + [f"Aportes S{k}" for k in range(1, N_SEMANAS + 1)]
+                        + ["Real a la fecha", "Aportes_resto del mes", "Aportes cierre de mes",
+                           "Estadístico", "Consenso"])
 ESTADISTICOS = ("Media", "Mediana", "Rango")
 PALETA = ["#1f77b4", "#ff7f0e", "#2ca02c", "#9467bd", "#8c564b", "#e377c2", "#17becf", "#bcbd22"]
 
@@ -173,24 +178,6 @@ def agregar_votos(ws, cols, votos: list[dict]) -> list[dict]:
     return nuevos
 
 
-def guardar_excel(wb, ruta: Path, dir_logs: Path) -> None:
-    """Copia de seguridad + guardado atómico del libro."""
-    dir_bk = dir_logs / "backups"
-    dir_bk.mkdir(parents=True, exist_ok=True)
-    bk = dir_bk / f"{ruta.stem}_{datetime.now():%Y%m%d_%H%M%S}{ruta.suffix}"
-    shutil.copy2(ruta, bk)
-    log.info("Copia de seguridad: %s", bk.resolve())
-    tmp = ruta.with_name(ruta.stem + ".tmp" + ruta.suffix)
-    wb.save(tmp)
-    try:
-        os.replace(tmp, ruta)
-    except PermissionError:
-        tmp.unlink(missing_ok=True)
-        raise PermissionError(f"No se pudo escribir {ruta.name}: ciérralo en Excel y vuelve a correr "
-                              f"(no se registró nada; la copia {bk.name} no cambió nada).")
-    log.info("Guardado %s", ruta.resolve())
-
-
 def votos_del_mes(ws, cols, mes: str) -> list[dict]:
     """Todos los votos del mes registrados en Registros (todas las corridas)."""
     g = lambda r, n: ws.cell(r, cols[norm(n)]).value
@@ -256,7 +243,7 @@ def estadisticos_ronda(vigentes: list[dict], semanas: list[dict]) -> dict:
     }
 
 
-def filas_consolidado(cuenca, ronda, vigentes, est, real_mean, mes, ahora) -> list[dict]:
+def filas_consolidado(cuenca, ronda, vigentes, est, real_mean, mes, fecha_consenso) -> list[dict]:
     """3 filas (Media, Mediana, Rango) para la hoja Consolidado."""
     evaluadores = ", ".join(v["evaluador"] for v in vigentes)
     filas = []
@@ -265,11 +252,11 @@ def filas_consolidado(cuenca, ronda, vigentes, est, real_mean, mes, ahora) -> li
             if clave == "rango":
                 return txt_rango(e["min"], e["max"]) or None
             return None if e[clave] is None else round(e[clave], 2)
-        fila = {"Fecha_hora_registro": ahora, "No Evaluación": ronda, "Cuenca": cuenca,
-                "Evaluador": evaluadores, "Real a la fecha": None if real_mean is None else round(real_mean, 2),
+        fila = {"Mes_pronostico": mes, "Fecha_consenso": fecha_consenso, "Cuenca": cuenca,
+                "No Evaluación": ronda, "Evaluador": evaluadores,
+                "Real a la fecha": None if real_mean is None else round(real_mean, 2),
                 "Aportes_resto del mes": valor(est["resto"]),
-                "Aportes cierre de mes": valor(est["cierre"]), "Estadístico": nombre,
-                "Mes_pronostico": mes}
+                "Aportes cierre de mes": valor(est["cierre"]), "Estadístico": nombre}
         for k in range(1, N_SEMANAS + 1):
             fila[f"Aportes S{k}"] = valor(est["sem"][f"S{k}"]) if f"S{k}" in est["sem"] else None
         filas.append(fila)
@@ -285,51 +272,108 @@ def _iguales(a, b) -> bool:
         return str(a) == str(b)
 
 
-def escribir_hoja_consolidado(wb, filas: list[dict]) -> tuple[int, int]:
-    """Crea/actualiza la hoja Consolidado. Clave: (Mes_pronostico, Cuenca, No Evaluación, Estadístico).
-    Devuelve (filas_nuevas, filas_actualizadas); una fila idéntica no se toca."""
+def _iso(v):
+    """Normaliza una celda de fecha a 'AAAA-MM-DD' para comparar/llaves."""
+    if isinstance(v, datetime):
+        return v.date().isoformat()
+    if hasattr(v, "isoformat"):
+        return v.isoformat()
+    return v
+
+
+def _migrar_consolidado(ws, fechas_consenso: list) -> None:
+    """Reordena una hoja Consolidado con el formato anterior al nuevo, conservando los datos.
+    Las filas viejas (con Fecha_hora_registro) reciben como Fecha_consenso la mayor fecha de consenso
+    de la hoja Fechas que sea <= la fecha de registro."""
+    viejas = {norm(ws.cell(1, c).value): c for c in range(1, ws.max_column + 1) if ws.cell(1, c).value}
+    estilo = ws.cell(1, 1)._style if ws.cell(1, 1).has_style else None
+    filas = []
+    for r in range(2, ws.max_row + 1):
+        reg = {n: ws.cell(r, c).value for n, c in viejas.items()}
+        if not reg.get("cuenca"):
+            continue
+        if reg.get("fecha_consenso") in (None, ""):
+            registro = reg.get("fecha_hora_registro")
+            f = pd.Timestamp(registro).normalize() if registro not in (None, "") else None
+            cand = [d for d in fechas_consenso if f is not None and d <= f]
+            elegido = max(cand) if cand else (f if f is not None else None)
+            log.warning("Consolidado (migración): fila %d sin Fecha_consenso; se asigna %s (registro %s)", r,
+                        None if elegido is None else elegido.date(), f.date() if f is not None else None)
+            reg["fecha_consenso"] = None if elegido is None else elegido.date()
+        filas.append(reg)
+    ws.delete_rows(1, ws.max_row)
+    for c, nombre in enumerate(COLUMNAS_CONSOLIDADO, start=1):
+        celda = ws.cell(1, c, nombre)
+        if estilo is not None:
+            celda._style = estilo
+    for i, reg in enumerate(filas, start=2):
+        for c, nombre in enumerate(COLUMNAS_CONSOLIDADO, start=1):
+            v = reg.get(norm(nombre))
+            celda = ws.cell(i, c, v)
+            if nombre == "Fecha_consenso" and v is not None:
+                celda.number_format = "yyyy-mm-dd"
+    log.info("Consolidado: hoja migrada al formato nuevo (%d filas)", len(filas))
+
+
+def _validacion_consenso(ws, col: int) -> None:
+    """Lista desplegable SI/NO en la columna Consenso (una sola vez)."""
+    letra = openpyxl.utils.get_column_letter(col)
+    for dv in ws.data_validations.dataValidation:
+        if dv.formula1 == '"SI,NO"':
+            return
+    dv = DataValidation(type="list", formula1='"SI,NO"', allow_blank=True)
+    dv.add(f"{letra}2:{letra}2000")
+    ws.add_data_validation(dv)
+
+
+def escribir_hoja_consolidado(wb, filas: list[dict], fechas_consenso: list) -> tuple[int, int]:
+    """Crea/migra/actualiza la hoja Consolidado.
+    Clave: (Mes_pronostico, Fecha_consenso, Cuenca, No Evaluación, Estadístico). La columna `Consenso`
+    (que el usuario llena con SI) NUNCA se sobrescribe. Devuelve (nuevas, actualizadas)."""
     if HOJA_CONSOLIDADO not in wb.sheetnames:
         ws = wb.create_sheet(HOJA_CONSOLIDADO)
         ref = wb[HOJA_REGISTROS]
         for c, nombre in enumerate(COLUMNAS_CONSOLIDADO, start=1):
             celda = ws.cell(1, c, nombre)
-            origen = ref.cell(1, min(c, ref.max_column))
-            if origen.has_style:
-                celda._style = origen._style
-            ws.column_dimensions[celda.column_letter].width = (
-                34 if nombre == "Evaluador" else 18 if nombre in ("Fecha_hora_registro", "Aportes_resto del mes", "Aportes cierre de mes") else 13)
+            if ref.cell(1, 1).has_style:
+                celda._style = ref.cell(1, 1)._style
         log.info("Se creó la hoja '%s'", HOJA_CONSOLIDADO)
     ws = wb[HOJA_CONSOLIDADO]
-    cols = {norm(ws.cell(1, c).value): c for c in range(1, ws.max_column + 1) if ws.cell(1, c).value}
-    for nombre in COLUMNAS_CONSOLIDADO:
-        if norm(nombre) not in cols:
-            c = max(cols.values()) + 1
-            ws.cell(1, c, nombre)
-            cols[norm(nombre)] = c
-    clave = lambda r: (str(r.get("Mes_pronostico")), str(r.get("Cuenca")), str(r.get("No Evaluación")),
-                       str(r.get("Estadístico")))
+    encabezado = [norm(ws.cell(1, c).value) for c in range(1, ws.max_column + 1) if ws.cell(1, c).value]
+    if encabezado != [norm(n) for n in COLUMNAS_CONSOLIDADO]:
+        _migrar_consolidado(ws, fechas_consenso)
+    for c, nombre in enumerate(COLUMNAS_CONSOLIDADO, start=1):
+        ws.column_dimensions[openpyxl.utils.get_column_letter(c)].width = (
+            34 if nombre == "Evaluador" else 18 if nombre in ("Fecha_consenso", "Aportes_resto del mes",
+                                                              "Aportes cierre de mes", "Mes_pronostico") else 13)
+    cols = {norm(n): c for c, n in enumerate(COLUMNAS_CONSOLIDADO, start=1)}
+    _validacion_consenso(ws, cols[norm("Consenso")])
+    clave = lambda r: (str(r.get("Mes_pronostico")), str(_iso(r.get("Fecha_consenso"))), str(r.get("Cuenca")),
+                       str(r.get("No Evaluación")), str(r.get("Estadístico")))
     existentes = {}
     for r in range(2, ws.max_row + 1):
-        reg = {n: ws.cell(r, c).value for n, c in ((x, cols[norm(x)]) for x in COLUMNAS_CONSOLIDADO)}
+        reg = {n: ws.cell(r, cols[norm(n)]).value for n in COLUMNAS_CONSOLIDADO}
         if reg.get("Cuenca"):
             existentes[clave(reg)] = r
     nuevas = actualizadas = 0
     sig = max(existentes.values(), default=1) + 1
+    escribibles = [n for n in COLUMNAS_CONSOLIDADO if n != "Consenso"]
     for f in filas:
         k = clave(f)
         if k in existentes:
             r = existentes[k]
-            actual = {n: ws.cell(r, cols[norm(n)]).value for n in COLUMNAS_CONSOLIDADO}
-            if all(_iguales(actual[n], f[n]) for n in COLUMNAS_CONSOLIDADO if n != "Fecha_hora_registro"):
+            actual = {n: ws.cell(r, cols[norm(n)]).value for n in escribibles}
+            if all(_iguales(_iso(actual[n]), _iso(f[n])) for n in escribibles):
                 continue
             actualizadas += 1
         else:
             r = sig
             sig += 1
             nuevas += 1
-        for n in COLUMNAS_CONSOLIDADO:
-            ws.cell(r, cols[norm(n)], f[n])
-        ws.cell(r, cols[norm("Fecha_hora_registro")]).number_format = "yyyy-mm-dd hh:mm:ss"
+        for n in escribibles:
+            celda = ws.cell(r, cols[norm(n)], f[n])
+            if n == "Fecha_consenso":
+                celda.number_format = "yyyy-mm-dd"
     return nuevas, actualizadas
 
 
@@ -583,7 +627,8 @@ def main() -> int:
             log.info("Entrada: %s | %d bytes | modificado %s | sha256=%s", p.resolve(), st.st_size,
                      datetime.fromtimestamp(st.st_mtime).isoformat(timespec="seconds"), sha256(p))
 
-        fechas = leer_fechas(args.consenso)
+        fechas = leer_fechas(args.consenso, args.fecha_corrida)
+        historial_fechas = sorted(leer_todas_fechas(args.consenso))
         evaluadores = leer_evaluadores(args.consenso)
         mes = f"{fechas['hor_ini']:%Y-%m}"
         fecha_corrida = (pd.Timestamp(args.fecha_corrida).normalize() if args.fecha_corrida
@@ -611,7 +656,6 @@ def main() -> int:
         log.info("Votos del mes %s en Registros: %d", mes, len(todos))
 
         # ---- cálculo por cuenca y ronda
-        ahora = datetime.now().replace(microsecond=0)
         pendientes, filas_excel = [], []
         for cuenca in sorted({v["cuenca"] for v in todos}):
             if cuenca not in cuencas:
@@ -630,7 +674,8 @@ def main() -> int:
                                 ["Fecha", cuenca]].dropna()
             seg, orden_vars = drivers_combinados(cuenca, ctx, ini, fechas["hor_fin"])
             for r in rondas:
-                filas_excel += filas_consolidado(cuenca, r, vig_por_ronda[r], historial[r], real_mean, mes, ahora)
+                filas_excel += filas_consolidado(cuenca, r, vig_por_ronda[r], historial[r], real_mean, mes,
+                                              fechas["consenso"].date())
             for r in ([args.ronda] if args.ronda else rondas):
                 if r not in vig_por_ronda:
                     log.warning("Cuenca '%s': no hay votos de la ronda %d; se omite", cuenca, r)
@@ -639,7 +684,7 @@ def main() -> int:
                                    real_mean, otros.get(cuenca, [])))
 
         # ---- Excel: Registros (votos nuevos) + Consolidado (resultados); una sola escritura
-        n_nuevas, n_act = escribir_hoja_consolidado(wb, filas_excel) if filas_excel else (0, 0)
+        n_nuevas, n_act = escribir_hoja_consolidado(wb, filas_excel, historial_fechas) if filas_excel else (0, 0)
         log.info("Hoja Consolidado: %d filas nuevas, %d actualizadas", n_nuevas, n_act)
         if nuevos or n_nuevas or n_act:
             guardar_excel(wb, args.consenso, args.logs)
