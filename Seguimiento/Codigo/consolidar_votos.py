@@ -488,7 +488,7 @@ __ESTILO_NAV__
 body{margin:0;font-family:Segoe UI,Arial,sans-serif;color:var(--txt);background:var(--bg)}
 header{padding:12px 20px;border-bottom:1px solid var(--brd);text-align:center}
 h1{font-size:20px;margin:0;font-weight:600} .sub{color:var(--sub);font-size:13px;margin-top:4px}
-#main{display:flex;gap:16px;padding:12px 20px 20px} #izq{flex:1 1 auto;min-width:0} #der{flex:0 0 250px;display:flex;flex-direction:column;gap:12px}
+#main{display:flex;gap:16px;padding:12px 20px 20px} #izq{flex:1 1 auto;min-width:0} #der{flex:0 0 250px;width:250px;min-width:0;display:flex;flex-direction:column;gap:12px;overflow-wrap:anywhere}
 .card{background:var(--card);border:1px solid var(--brd);border-radius:8px;padding:10px 12px;font-size:13px;color:var(--sub)}
 .card .v{font-size:22px;color:var(--txt);margin-top:4px;font-weight:600}
 .btns{display:flex;gap:6px} .btns button{flex:1;padding:8px;border:1px solid var(--brd);background:var(--bg);color:var(--txt);border-radius:6px;cursor:pointer;font-size:14px}

@@ -16,8 +16,10 @@ Métricas (P = valor pronosticado de la semana, igual para todos sus días; Od =
 Para juntar semanas (p. ej. todo un mes): MSE y MAPE se ponderan por Dias_evaluados
 (RMSE = √MSE ponderado).
 
-Estado: `Parcial` mientras falten días por observar (el último dato es anterior al fin de la semana)
-y `Evaluada` cuando la semana ya cerró; las filas `Evaluada` se congelan (usar --reevaluar para recalcular).
+Estado: `Pendiente` si la semana aún no tiene ningún día observado (Valor_real y métricas en blanco),
+`Parcial` mientras falten días por observar (el último dato es anterior al fin de la semana) y `Evaluada`
+cuando la semana ya cerró; las filas `Evaluada` se congelan (usar --reevaluar para recalcular).
+La hoja `Evaluación` se crea siempre en Consenso.xlsx, aunque no haya nada que evaluar.
 
 Se ejecuta sola al final de crear_graficos_consenso.py, o a mano:  python evaluacion.py [--reevaluar]
 """
@@ -133,6 +135,8 @@ def _valor_ini(v):
 
 
 def _hoja_evaluacion(wb):
+    """Devuelve (hoja, columnas, cambiada). Crea la hoja Evaluación si no existe (con encabezados)."""
+    cambiada = False
     if HOJA_EVALUACION in wb.sheetnames:
         ws = wb[HOJA_EVALUACION]
     else:
@@ -146,6 +150,7 @@ def _hoja_evaluacion(wb):
                 22 if nombre in ("Metrica_desempeño", "fecha_inicio_horizonte", "fecha_fin_horizonte",
                                  "Fecha_evaluacion") else 16)
         ws.freeze_panes = "A2"
+        cambiada = True
         log.info("Se creó la hoja '%s'", HOJA_EVALUACION)
     cols = _cols(ws)
     for nombre in COLUMNAS_EVAL:   # agrega columnas que falten (por si se editó la hoja)
@@ -153,21 +158,56 @@ def _hoja_evaluacion(wb):
             c = max(cols.values()) + 1
             ws.cell(1, c, nombre)
             cols[norm(nombre)] = c
-    return ws, cols
+            cambiada = True
+    return ws, cols, cambiada
+
+
+def _num(v):
+    if v in (None, ""):
+        return None
+    try:
+        return float(v)
+    except (TypeError, ValueError):
+        return v
+
+
+def _igual(a, b) -> bool:
+    a, b = _num(_valor_ini(a)), _num(_valor_ini(b))
+    if a is None or b is None:
+        return a is None and b is None
+    if isinstance(a, float) and isinstance(b, float):
+        return abs(a - b) < 1e-6
+    return a == b
+
+
+def resumen_texto(cont: dict, ruta: Path) -> str:
+    """Mensaje para pantalla: dónde quedó la evaluación y qué contiene."""
+    if cont.get("seleccionados", 0) == 0:
+        return (f"Evaluación: no hay consensos marcados SI en la hoja Consolidado; la hoja '{HOJA_EVALUACION}' de "
+                f"{ruta.name} queda vacía.")
+    return (f"Evaluación → hoja '{HOJA_EVALUACION}' de {ruta.name}: {cont['nuevas']} filas nuevas, "
+            f"{cont['actualizadas']} actualizadas, {cont['congeladas']} congeladas; "
+            f"{cont['semanas_pendientes']} semanas sin datos observados (celdas en blanco, estado Pendiente).")
 
 
 def evaluar(ruta_consenso: Path, ruta_aportes: Path, dir_logs: Path, reevaluar: bool = False) -> dict:
-    """Evalúa por semana los consensos marcados SI y escribe la hoja Evaluación.
-    Devuelve contadores {nuevas, actualizadas, congeladas, sin_cambio}."""
+    """Evalúa por semana los consensos marcados SI y escribe la hoja Evaluación (que siempre se crea).
+    Semanas sin días observados quedan con Valor_real y métricas en blanco (Estado = Pendiente).
+    Devuelve contadores {seleccionados, nuevas, actualizadas, congeladas, sin_cambio, semanas_pendientes}."""
     hoy = datetime.now().date()
-    cont = {"nuevas": 0, "actualizadas": 0, "congeladas": 0, "sin_cambio": 0}
+    cont = {"seleccionados": 0, "nuevas": 0, "actualizadas": 0, "congeladas": 0, "sin_cambio": 0,
+            "semanas_pendientes": 0}
     wb = openpyxl.load_workbook(ruta_consenso)
+    ws, cols, cambiada = _hoja_evaluacion(wb)
     elegidos = consensos_seleccionados(wb)
+    cont["seleccionados"] = len(elegidos)
     if not elegidos:
+        log.info("Evaluación: sin consensos marcados SI; la hoja '%s' queda vacía", HOJA_EVALUACION)
+        if cambiada:
+            guardar_excel(wb, ruta_consenso, dir_logs)
         return cont
     fechas = leer_todas_fechas(ruta_consenso)
     aportes = leer_aportes(ruta_aportes)
-    ws, cols = _hoja_evaluacion(wb)
     existentes = {}
     for r in range(2, ws.max_row + 1):
         k = tuple(_valor_ini(ws.cell(r, cols[norm(n)]).value) for n in CLAVE)
@@ -199,29 +239,35 @@ def evaluar(ruta_consenso: Path, ruta_aportes: Path, dir_logs: Path, reevaluar: 
                 continue
             dias = pd.date_range(sem["ini"], sem["fin"])
             obs = [float(v) for v in serie.reindex(dias).dropna()]
-            if not obs:
-                log.debug("Evaluación: %s %s %s sin días observados todavía", cuenca, ch["fecha"].date(), clave_s)
-                continue
-            estado = "Evaluada" if corte is not None and corte >= sem["fin"] else "Parcial"
-            ceros = sum(1 for o in obs if o <= 0)
-            if ceros:
-                log.warning("Evaluación: %s %s %s: %d días con aporte <= 0 se excluyen del MAPE", cuenca,
-                            ch["fecha"].date(), clave_s, ceros)
-            mets = calcular_metricas(p, obs)
+            if obs:
+                estado = "Evaluada" if corte is not None and corte >= sem["fin"] else "Parcial"
+                ceros = sum(1 for o in obs if o <= 0)
+                if ceros:
+                    log.warning("Evaluación: %s %s %s: %d días con aporte <= 0 se excluyen del MAPE", cuenca,
+                                ch["fecha"].date(), clave_s, ceros)
+                mets = calcular_metricas(p, obs)
+                valor_real = round(sum(obs) / len(obs), 4)
+            else:   # sin datos observados: todo en blanco hasta que lleguen
+                estado = "Pendiente"
+                mets = {m: None for m in METRICAS}
+                valor_real = None
+                cont["semanas_pendientes"] += 1
+                log.info("Evaluación: %s %s %s sin días observados todavía (Pendiente)", cuenca,
+                         ch["fecha"].date(), clave_s)
             base = {"Fecha_consenso": ch["fecha"].date(), "Cuenca": cuenca, "No Evaluación": ch["ronda"],
                     "Evaluador": ch["evaluador"], "horizonte": clave_s,
                     "fecha_inicio_horizonte": sem["ini"].date(), "fecha_fin_horizonte": sem["fin"].date(),
-                    "Valor_pronos": round(p, 4), "Valor_real": round(sum(obs) / len(obs), 4),
+                    "Valor_pronos": round(p, 4), "Valor_real": valor_real,
                     "Estadístico": ch["estadistico"], "Dias_evaluados": len(obs), "Dias_semana": sem["dias"],
                     "Estado": estado, "Fecha_corte": corte.date() if corte is not None else None,
                     "Fecha_evaluacion": hoy}
             for metrica in METRICAS:
                 valor = mets[metrica]
-                if valor is None:
-                    log.info("Evaluación: %s %s %s: %s no calculable (sin días válidos)", cuenca,
+                if valor is None and obs:
+                    log.info("Evaluación: %s %s %s: %s no calculable (sin días válidos); queda en blanco", cuenca,
                              ch["fecha"].date(), clave_s, metrica)
-                    continue
-                fila = dict(base, Metrica_desempeño=metrica, Valor_Metrica=round(valor, 6))
+                fila = dict(base, Metrica_desempeño=metrica,
+                            Valor_Metrica=None if valor is None else round(valor, 6))
                 k = tuple(_valor_ini(fila[n]) for n in CLAVE)
                 if k in existentes:
                     r = existentes[k]
@@ -229,29 +275,29 @@ def evaluar(ruta_consenso: Path, ruta_aportes: Path, dir_logs: Path, reevaluar: 
                     if norm(previo) == "evaluada" and not reevaluar:
                         cont["congeladas"] += 1
                         continue
-                    igual = all(_valor_ini(ws.cell(r, cols[norm(n)]).value) == _valor_ini(fila[n])
-                                for n in COLUMNAS_EVAL if n not in ("Fecha_evaluacion", "Valor_Metrica", "Valor_real",
-                                                                    "Valor_pronos"))
-                    igual = igual and all(abs(float(ws.cell(r, cols[norm(n)]).value or 0) - float(fila[n])) < 1e-6
-                                          for n in ("Valor_Metrica", "Valor_real", "Valor_pronos"))
-                    if igual:
+                    if all(_igual(ws.cell(r, cols[norm(n)]).value, fila[n])
+                           for n in COLUMNAS_EVAL if n != "Fecha_evaluacion"):
                         cont["sin_cambio"] += 1
                         continue
                     cont["actualizadas"] += 1
+                    accion = "actualizada"
                 else:
                     r = sig
                     sig += 1
                     cont["nuevas"] += 1
+                    accion = "nueva"
                 for n in COLUMNAS_EVAL:
                     celda = ws.cell(r, cols[norm(n)], fila[n])
                     if n in COLUMNAS_FECHA:
                         celda.number_format = "yyyy-mm-dd"
-                log.info("Evaluación %s | %s | %s | %s %s | pron=%.2f real=%.2f (%d/%d días, %s) | %s=%.4f",
-                         "nueva" if k not in existentes else "actualizada", cuenca, ch["fecha"].date(), clave_s,
-                         ch["estadistico"], p, base["Valor_real"], len(obs), sem["dias"], estado, metrica, valor)
-    log.info("Evaluación: nuevas=%d actualizadas=%d congeladas=%d sin cambio=%d", cont["nuevas"],
-             cont["actualizadas"], cont["congeladas"], cont["sin_cambio"])
-    if cont["nuevas"] or cont["actualizadas"]:
+                log.info("Evaluación %s | %s | %s | %s %s | pron=%.2f real=%s (%d/%d días, %s) | %s=%s", accion,
+                         cuenca, ch["fecha"].date(), clave_s, ch["estadistico"], p,
+                         "" if valor_real is None else f"{valor_real:.2f}", len(obs), sem["dias"], estado,
+                         metrica, "" if valor is None else f"{valor:.4f}")
+    log.info("Evaluación: nuevas=%d actualizadas=%d congeladas=%d sin cambio=%d semanas pendientes=%d",
+             cont["nuevas"], cont["actualizadas"], cont["congeladas"], cont["sin_cambio"],
+             cont["semanas_pendientes"])
+    if cambiada or cont["nuevas"] or cont["actualizadas"]:
         guardar_excel(wb, ruta_consenso, dir_logs)
     return cont
 
@@ -280,8 +326,7 @@ def main() -> int:
             log.info("Entrada: %s | sha256=%s", p.resolve(), sha256(p))
         cont = evaluar(args.consenso, args.aportes, args.logs, args.reevaluar)
         log.info("FIN OK run_id=%s duración=%.2fs log=%s", run_id, time.time() - t0, ruta_log.resolve())
-        print(f"\nEvaluación: {cont['nuevas']} filas nuevas, {cont['actualizadas']} actualizadas, "
-              f"{cont['congeladas']} congeladas, {cont['sin_cambio']} sin cambio")
+        print("\n" + resumen_texto(cont, args.consenso))
         return 0
     except Exception:
         log.exception("FIN CON ERROR run_id=%s tras %.2fs", run_id, time.time() - t0)

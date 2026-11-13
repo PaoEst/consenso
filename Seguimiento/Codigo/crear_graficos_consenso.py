@@ -151,7 +151,7 @@ input:disabled{border-color:var(--brd);background:var(--card);cursor:not-allowed
 #guardar{background:#d62728;color:#fff;border:0;border-radius:6px;padding:9px 22px;font-weight:700;letter-spacing:.5px;cursor:pointer}
 #guardar:disabled{background:var(--brd);color:var(--sub);cursor:not-allowed}
 #main{display:flex;gap:16px;padding:10px 20px 20px}
-#izq{flex:1 1 auto;min-width:0} #der{flex:0 0 220px;display:flex;flex-direction:column;gap:12px;padding-top:84px}
+#izq{flex:1 1 auto;min-width:0} #der{flex:0 0 150px;width:150px;min-width:0;max-width:150px;overflow:hidden;display:flex;flex-direction:column;gap:10px;padding-top:84px}
 #izq{position:relative}
 #semrow{position:relative;height:84px;z-index:3}
 .sem{position:absolute;top:0;width:46px;text-align:center;transform:translateX(-50%)}
@@ -160,10 +160,10 @@ input:disabled{border-color:var(--brd);background:var(--card);cursor:not-allowed
 .sem input{width:46px;height:30px;margin-top:6px;padding:0 2px;font-size:14px;-moz-appearance:textfield}
 .sem input::-webkit-outer-spin-button,.sem input::-webkit-inner-spin-button{-webkit-appearance:none;margin:0}
 #grafico{position:relative;z-index:1}
-.card{background:var(--card);border:1px solid var(--brd);border-radius:8px;padding:10px 12px;font-size:13px;color:var(--sub)}
-.card input{width:100%;margin-top:6px;font-size:16px}
-.valor{margin-top:6px;border:2px solid var(--brd);border-radius:6px;padding:6px;text-align:center;font-size:16px;color:var(--txt);background:var(--bg);min-height:36px}
-#msg{font-size:13px;min-height:20px} .ok{color:#1a7f37}.err{color:#d62728}
+.card{background:var(--card);border:1px solid var(--brd);border-radius:8px;padding:8px 10px;font-size:12px;line-height:1.25;color:var(--sub)}
+.card input{width:100%;margin-top:5px;padding:5px 4px;font-size:16px}
+.valor{margin-top:5px;border:2px solid var(--brd);border-radius:6px;padding:5px 4px;text-align:center;font-size:16px;color:var(--txt);background:var(--bg);min-height:34px;box-sizing:border-box}
+#msg{font-size:12px;line-height:1.3;min-height:20px;overflow-wrap:anywhere;word-break:break-word} .ok{color:#1a7f37}.err{color:#d62728}
 </style>
 <script>__PLOTLYJS__</script></head><body>
 __NAV__
@@ -298,7 +298,7 @@ $('guardar').addEventListener('click', () => {
   const blob = new Blob([JSON.stringify(voto,null,2)], {type:'application/json'});
   const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = nombre;
   document.body.appendChild(a); a.click(); a.remove(); setTimeout(()=>URL.revokeObjectURL(a.href), 2000);
-  mensaje('Voto guardado en el archivo "'+nombre+'". Déjalo en la carpeta "votos" de la corrida.','ok');
+  mensaje('Voto guardado: '+nombre+'. Déjalo en la carpeta "votos".','ok');
 });
 validarEvaluador(); dibujar(valoresSemanas());
 </script></body></html>
@@ -507,10 +507,11 @@ def main() -> int:
         # Evaluación semanal de los consensos marcados SI (no bloquea los gráficos si falla)
         if not args.sin_evaluacion:
             try:
-                from evaluacion import evaluar
+                from evaluacion import evaluar, resumen_texto
                 cont = evaluar(args.consenso, args.aportes, args.logs)
-                print(f"Evaluación: {cont['nuevas']} filas nuevas, {cont['actualizadas']} actualizadas, "
-                      f"{cont['congeladas']} congeladas")
+                texto = resumen_texto(cont, args.consenso)
+                log.info(texto)
+                print(texto)
             except Exception as e:
                 log.exception("Evaluación no realizada (los gráficos ya se generaron)")
                 print(f"AVISO: no se pudo actualizar la hoja Evaluación: {e}")

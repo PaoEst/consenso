@@ -99,7 +99,11 @@ Al guardar, el archivo pierde los valores calculados guardados de sus fórmulas 
 evalúan las fórmulas de `Fechas` por su cuenta). Los votos con evaluador no autorizado, mes distinto o datos inválidos se
 rechazan y quedan anotados en el log.
 
-## Evaluación semanal (hoja `Evaluación`)
+## Evaluación semanal (hoja `Evaluación` de `Insumos/Consenso.xlsx`)
+La evaluación queda en la hoja **`Evaluación` de `Insumos/Consenso.xlsx`**, que se crea siempre (aunque aún no haya nada que evaluar). Si una semana todavía
+no tiene aportes observados, sus filas quedan con `Valor_real` y `Valor_Metrica` **en blanco** y `Estado` = `Pendiente`; cuando llegan los datos se llenan en la
+misma fila. Al terminar de generar los gráficos, el script muestra en pantalla dónde quedó y cuántas semanas están pendientes.
+
 Cuando generas los gráficos del siguiente consenso (`crear_graficos_consenso.py`) —o con `python evaluacion.py`— se evalúan los consensos de `Consolidado`
 con `Consenso = SI`. Un SI por cuenca y fecha de consenso (si hay más, se usa la ronda mayor; una fila marcada en `Rango` se omite: no es un valor puntual).
 Cada semana (fechas de la fila de `Fechas` de ese consenso) se compara con los aportes observados de `Seguimiento_Aportes`, usando solo los días con dato.
@@ -112,7 +116,7 @@ Con P = valor pronosticado de la semana (el mismo para todos sus días) y Od = o
 - **MSE** = media((P − Od)²).
 - **FB** (sesgo fraccional) = 2 · (Ō − P) / (Ō + P); **positivo = el pronóstico subestima**, negativo = sobreestima.
 
-`Estado`: `Parcial` mientras el último dato observado sea anterior al fin de la semana (se recalcula en cada corrida); `Evaluada` cuando la semana ya cerró
+`Estado`: `Pendiente` si la semana aún no tiene ningún día observado; `Parcial` mientras el último dato observado sea anterior al fin de la semana (se recalcula en cada corrida); `Evaluada` cuando la semana ya cerró
 (la fila se congela; `python evaluacion.py --reevaluar` la recalcula). Para juntar varias semanas (p. ej. un mes) pondera por `Dias_evaluados`:
 MSE = Σ(MSE·días)/Σ días y RMSE = √MSE; igual para MAPE. Si la evaluación falla (p. ej. `Consenso.xlsx` abierto en Excel), los gráficos se generan igual
 y queda un aviso en pantalla y en el log (`--sin-evaluacion` la omite).
