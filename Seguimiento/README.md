@@ -57,6 +57,10 @@ Los scripts **siempre leen los Excel de la carpeta `Insumos/`** (hermana de `Cod
 - *`PermissionError` o no encuentra el Excel*: cierra los archivos en Excel y confirma que `Seguimiento_Aportes.xlsx` y `Seguimiento_Drivers.xlsx` están junto al script.
 - Ante cualquier error revisa `logs\ejecucion.log`.
 
+> **Después de actualizar el código** (descargar una versión nueva), vuelve a correr `python crear_graficos_consenso.py` y abre los HTML nuevos: los HTML ya
+> generados conservan el comportamiento de la versión con la que se crearon. Al pie de cada página (votación, informativo y Consolidado) aparece
+> "Generado el AAAA-MM-DD HH:MM · versión del código X"; si no coincide con la versión que descargaste, la página es antigua.
+
 ## Flujo del consenso (ejecutar dentro de `Codigo/`, con los Excel de `Insumos/` cerrados)
 1. **Preparar los Excel** (seguimiento, pronóstico, `Consenso.xlsx` con `Fechas` y `Evaluadores_Tecnicos`).
    Cada consenso es **una fila nueva** en la hoja `Fechas` (queda el historial); los scripts usan la **última fila**. Para trabajar con un

@@ -47,7 +47,7 @@ from consenso_comun import (ARCHIVO_CONSENSO, ARCHIVO_OTROS, ARCHIVO_PRONOSTICO,
                             cargar_drivers, carpeta_corrida, cuencas_registradas, drivers_combinados,
                             escribir_indice, etiqueta_semana_corta, leer_evaluadores, leer_fechas, leer_todas_fechas,
                             leer_otros_pronosticos,
-                            plotly_js, real_a_la_fecha, registrar_cuenca, guardar_excel)
+                            plotly_js, pie_version, real_a_la_fecha, registrar_cuenca, guardar_excel)
 from graficar_aportes import (ARCHIVO_APORTES, ARCHIVO_DRIVERS, C_ABAJO, C_ARRIBA, C_LINEA,
                               configurar_logging, definir_ventana, leer_aportes, log,
                               nombre_archivo, norm, relleno_media, sha256)
@@ -539,7 +539,7 @@ function mostrar(s){
 document.querySelectorAll('.btns button').forEach(b => b.addEventListener('click', () => mostrar(b.dataset.s)));
 window.addEventListener('load', () => setTimeout(() => Plotly.Plots.resize(gd), 50));
 mostrar('media');
-</script></body></html>
+</script>__PIE__</body></html>
 """
 
 
@@ -586,6 +586,7 @@ def escribir_consolidado(ruta, cuenca, ronda, vigentes, historial, serie, seg, o
               .replace("__TABLA__", tabla_votos(vigentes, fechas["semanas"], evaluadores, real_mean))
               .replace("__DATOS__", json.dumps(datos).replace("</", "<\\/"))
               .replace("__GRAFICO__", div)
+              .replace("__PIE__", pie_version())
               .replace("__PLOTLYJS__", plotly_js()))
     ruta.write_text(pagina, encoding="utf-8")
 

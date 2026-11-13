@@ -43,7 +43,7 @@ from consenso_comun import (ARCHIVO_CONSENSO, ARCHIVO_OTROS, ARCHIVO_PRONOSTICO,
                             agregar_otros_pronosticos, barra_navegacion, cargar_drivers, carpeta_corrida, drivers_combinados,
                             escribir_indice, etiqueta_semana_corta, leer_evaluadores, leer_fechas,
                             leer_otros_pronosticos,
-                            plotly_js, real_a_la_fecha, registrar_cuenca)
+                            plotly_js, pie_version, real_a_la_fecha, registrar_cuenca)
 from graficar_aportes import (ARCHIVO_APORTES, ARCHIVO_DRIVERS, C_ABAJO, C_ARRIBA, C_LINEA,
                               configurar_logging, definir_ventana, leer_aportes, log,
                               nombre_archivo, relleno_media, sha256)
@@ -163,7 +163,7 @@ input:disabled{border-color:var(--brd);background:var(--card);cursor:not-allowed
 .card{background:var(--card);border:1px solid var(--brd);border-radius:8px;padding:8px 10px;font-size:12px;line-height:1.25;color:var(--sub)}
 .card input{width:100%;margin-top:5px;padding:5px 4px;font-size:16px}
 .valor{margin-top:5px;border:2px solid var(--brd);border-radius:6px;padding:5px 4px;text-align:center;font-size:16px;color:var(--txt);background:var(--bg);min-height:34px;box-sizing:border-box}
-#msg{font-size:12px;line-height:1.3;min-height:20px;overflow-wrap:anywhere;word-break:break-word} .ok{color:#1a7f37}.err{color:#d62728}
+#msg{font-size:12px;line-height:1.3;min-height:20px;max-width:100%;overflow:hidden;white-space:pre-line;overflow-wrap:anywhere;word-break:break-word} .ok{color:#1a7f37}.err{color:#d62728}
 </style>
 <script>__PLOTLYJS__</script></head><body>
 __NAV__
@@ -298,10 +298,10 @@ $('guardar').addEventListener('click', () => {
   const blob = new Blob([JSON.stringify(voto,null,2)], {type:'application/json'});
   const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = nombre;
   document.body.appendChild(a); a.click(); a.remove(); setTimeout(()=>URL.revokeObjectURL(a.href), 2000);
-  mensaje('Voto guardado: '+nombre+'. Déjalo en la carpeta "votos".','ok');
+  mensaje('Voto guardado:\n'+nombre+'\nDéjalo en la carpeta "votos".','ok');
 });
 validarEvaluador(); dibujar(valoresSemanas());
-</script></body></html>
+</script>__PIE__</body></html>
 """
 
 
@@ -324,7 +324,7 @@ __NAV__
 <script>
 const gd = document.getElementById('grafico').getElementsByClassName('plotly-graph-div')[0];
 window.addEventListener('load', () => setTimeout(() => Plotly.Plots.resize(gd), 50));
-</script></body></html>
+</script>__PIE__</body></html>
 """
 
 
@@ -342,6 +342,7 @@ def escribir_informativo(ruta: Path, cuenca: str, fig, fechas, carpeta: Path) ->
               .replace("__ESTILO_NAV__", ESTILO_NAV)
               .replace("__NAV__", "<!--NAV:%s-->" % archivo)
               .replace("__GRAFICO__", div)
+              .replace("__PIE__", pie_version())
               .replace("__PLOTLYJS__", plotly_js()))
     ruta.write_text(pagina, encoding="utf-8")
 
@@ -377,6 +378,7 @@ def escribir_html(ruta: Path, cuenca: str, fig, idx_linea, idx_texto, fechas, ev
               .replace("__NAV__", "<!--NAV:%s-->" % archivo)
               .replace("__DATOS__", js_seguro(datos))
               .replace("__GRAFICO__", div)
+              .replace("__PIE__", pie_version())
               .replace("__PLOTLYJS__", plotly_js()))
     ruta.write_text(pagina, encoding="utf-8")
 

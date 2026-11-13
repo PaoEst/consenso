@@ -11,7 +11,7 @@ import pandas as pd
 from openpyxl.utils import get_column_letter
 import plotly.offline
 
-from graficar_aportes import BASE, INSUMOS, SALIDAS, log, norm
+from graficar_aportes import BASE, INSUMOS, SALIDAS, VERSION_CODIGO, log, norm
 
 ARCHIVO_CONSENSO = "Consenso.xlsx"
 ARCHIVO_PRONOSTICO = "Pronostico_Drivers.xlsx"
@@ -431,6 +431,12 @@ def barra_navegacion(carpeta: Path, actual: str, donde: str, ronda: int | None =
     if donde == "votacion" and (carpeta / CARPETA_INFORMATIVO / f"{PREFIJO_INFORMATIVO}_{actual}.html").exists():
         partes.append(f'<a href="{CARPETA_INFORMATIVO}/{PREFIJO_INFORMATIVO}_{html.escape(actual)}.html">Ver informativo (sin votación) ›</a>')
     return '<nav class="nav">' + "".join(partes) + "</nav>"
+
+
+def pie_version() -> str:
+    """Pie de página con la fecha de generación y la versión del código (para detectar páginas viejas)."""
+    return (f'<div style="padding:6px 20px 14px;font-size:11px;color:#8a949e">Generado el '
+            f'{datetime.now():%Y-%m-%d %H:%M} · versión del código {VERSION_CODIGO}</div>')
 
 
 ESTILO_NAV = ("<style>.nav{display:flex;flex-wrap:wrap;gap:18px;align-items:center;padding:8px 20px;"

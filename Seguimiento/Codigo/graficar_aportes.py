@@ -44,6 +44,7 @@ from plotly.subplots import make_subplots
 # --------------------------------------------------------------------------
 # Configuración
 # --------------------------------------------------------------------------
+VERSION_CODIGO = "2026-11-13.3"                 # se actualiza en cada publicación (aparece en el pie de las páginas)
 BASE = Path(__file__).resolve().parent          # carpeta del código (scripts, logs)
 INSUMOS = BASE.parent / "Insumos"                 # archivos Excel de entrada (y Consenso.xlsx)
 SALIDAS = BASE.parent / "Salidas"                 # resultados: Salidas/<año>/<mes>/<fecha>/
