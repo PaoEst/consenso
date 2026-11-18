@@ -21,7 +21,8 @@ Columnas usadas: `Carpeta`, `Variable`, `Insumo`, `filename_type`, `filename`, `
 
 ## Cómo se ve la página
 
-- Título "Moduladores Climáticos", índice con un enlace a cada `Variable` y botón flotante "↑ Índice" para volver. Cada Variable tiene un título central.
+- Título "Moduladores Climáticos", índice con un enlace a cada `Variable` y botón flotante "↑ Índice" para volver.
+- **Orden del índice:** fila 1 = Variables de lluvia diaria, fila 2 = lluvia semanal, fila 3 = lluvia mensual y después las demás (en el orden de la tabla). Se buscan las palabras `lluvia` + `diari`/`seman`/`mensu` dentro del nombre de la `Variable`, en cualquier orden y sin importar mayúsculas, minúsculas o acentos (p. ej. `lluvia_diaria_col_wrf`, `Lluvia Diaria Bogotá`, `DIARIA lluvia`). Las filas sin Variables no se muestran. Para añadir o cambiar grupos, edita `GRUPOS_INDICE` al inicio de `generar_html.py`. Cada Variable tiene un título central.
 - Si una Variable tiene **un solo tipo** de `Carpeta` (`Seguimiento`, `Pronostico` o `Seguim_Pronos`), sus mapas van en **filas de máximo 4** (la última fila queda centrada) bajo el título `Seguimiento`, `Pronóstico` o `Seguimiento-Pronóstico`.
 - Si tiene seguimiento y pronóstico a la vez, se muestran dos columnas: izquierda `Seguimiento`, derecha `Pronostico` y `Seguim_Pronos`.
 - **Zoom:** clic en un mapa lo amplía (otro clic: tamaño real; otro clic o `Esc`: cerrar). No aumenta el peso del archivo.

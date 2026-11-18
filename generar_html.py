@@ -13,7 +13,9 @@ Distribución de la página:
   - Si una Variable tiene un solo tipo de información, sus mapas van en filas de máximo 4 mapas (la última
     fila queda centrada) bajo el título que corresponde: Seguimiento, Pronóstico o Seguimiento-Pronóstico.
   - Al hacer clic en un mapa se amplía (clic de nuevo: tamaño real; otro clic o Esc: cerrar) sin duplicar la imagen en el archivo.
-  - Al inicio hay un índice con un enlace a cada Variable; cada Variable y un botón flotante permiten volver al índice.
+  - Al inicio hay un índice con un enlace a cada Variable, ordenado en filas: lluvia diaria, lluvia semanal,
+    lluvia mensual y las demás (se buscan palabras en el nombre de la Variable, sin importar orden ni mayúsculas;
+    ver GRUPOS_INDICE); cada Variable y un botón flotante permiten volver al índice.
   - El título de cada mapa es la columna Insumo. Solo se incluyen filas con Descargar = "si".
 """
 import argparse  # Para leer los argumentos de la línea de comandos
@@ -43,6 +45,7 @@ log = logging.getLogger("moduladores")  # Logger principal de la aplicación
 TITULO = "Moduladores Climáticos"  # Título principal de la página
 IZQUIERDA = {"seguimiento"}  # Valores de Carpeta que van en la columna izquierda
 ETIQUETAS = {"seguimiento": "Seguimiento", "pronostico": "Pronóstico", "pronóstico": "Pronóstico", "seguim_pronos": "Seguimiento-Pronóstico"}  # Título que corresponde a cada tipo de Carpeta
+GRUPOS_INDICE = [("Lluvia diaria", ("lluvia", "diari")), ("Lluvia semanal", ("lluvia", "seman")), ("Lluvia mensual", ("lluvia", "mensu"))]  # Filas del índice: nombre y palabras clave que deben estar TODAS en el nombre de la Variable (cualquier orden)
 DERECHA = {"pronostico", "pronóstico", "seguim_pronos"}  # Valores de Carpeta que van en la columna derecha (junto a los pronósticos)
 
 CSS = """
@@ -67,7 +70,9 @@ figure img{display:block;width:80%;max-width:560px;height:auto;margin:0 auto}
 .fallo{padding:24px 12px;text-align:center;color:var(--warn);border:1px dashed var(--warn);border-radius:6px}
 #indice{margin:20px 0 0;padding:14px 16px;background:var(--card);border:1px solid var(--line);border-radius:8px}
 #indice h2{all:unset;display:block;text-align:center;font-weight:700;font-size:1.1rem;margin-bottom:10px}
-#indice ul{list-style:none;margin:0;padding:0;display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:8px}
+#indice ul{list-style:none;margin:0 0 8px;padding:0;display:flex;flex-wrap:wrap;justify-content:center;gap:8px}
+#indice li{flex:0 1 210px}
+@media (max-width:600px){#indice li{flex:1 1 100%}}
 #indice a{display:block;text-align:center;padding:8px 12px;border:1px solid var(--line);border-radius:6px;color:var(--acc);text-decoration:none;font-weight:600}
 #indice a:hover{background:var(--acc);color:#fff}
 .volver{position:absolute;right:12px;top:50%;transform:translateY(-50%);color:#fff;font-size:.8rem;font-weight:400;text-decoration:none;opacity:.9}
@@ -194,6 +199,19 @@ def guardar_atomico(destino: Path, datos: bytes):  # Guarda el archivo sin dejar
 
 
 # ----------------------------------------------------------------- construcción de la página
+def clave(texto: str) -> str:  # Normaliza un nombre para buscar palabras: sin acentos, en minúsculas y con espacios como separador
+    sin_acentos = unicodedata.normalize("NFKD", str(texto)).encode("ascii", "ignore").decode("ascii").lower()  # Quita acentos y pasa a minúsculas
+    return re.sub(r"[^a-z0-9]+", " ", sin_acentos).strip()  # Guiones, guiones bajos y otros símbolos pasan a espacios
+
+
+def fila_indice(variable: str) -> int:  # Decide en qué fila del índice va una Variable (0, 1, 2 = grupos; len(grupos) = los demás)
+    nombre = clave(variable)  # Nombre normalizado de la Variable
+    for n, (_, palabras) in enumerate(GRUPOS_INDICE):  # Recorre los grupos en orden (diaria, semanal, mensual)
+        if all(p in nombre for p in palabras):  # Si TODAS las palabras clave aparecen (sin importar el orden)...
+            return n  # ...la Variable va en la fila de ese grupo
+    return len(GRUPOS_INDICE)  # Si no coincide con ningún grupo, va en las filas de "los demás"
+
+
 def lado_de(carpeta: str) -> str:  # Decide en qué columna va una fila según su Carpeta
     n = norm(carpeta)  # Normaliza el texto (minúsculas, sin espacios extra)
     if n in IZQUIERDA:  # Seguimiento...
@@ -265,7 +283,8 @@ def columna(nombre: str, figuras: list) -> str:  # Construye una columna (izquie
 
 
 def construir_html(grupos: dict, hoy: date, generado: datetime) -> str:  # Arma la página completa
-    secciones, indice, usados = [], [], set()  # Secciones y entradas del índice (una por Variable) e identificadores ya usados
+    secciones, usados = [], set()  # Secciones (una por Variable) e identificadores de enlace ya usados
+    indice = [[] for _ in range(len(GRUPOS_INDICE) + 1)]  # Entradas del índice repartidas por fila (un grupo por fila y una última para los demás)
     for variable, lados in grupos.items():  # Recorre las Variables en el orden de la tabla
         if lados["izq"] and lados["der"]:  # Hay seguimiento y pronóstico: dos columnas
             cols = f'<div class="cols">{columna("Seguimiento", lados["izq"])}{columna("Pronóstico", lados["der"])}</div>'  # Izquierda y derecha
@@ -277,7 +296,7 @@ def construir_html(grupos: dict, hoy: date, generado: datetime) -> str:  # Arma 
                 titulo = "Seguimiento" if lado == "izq" else "Pronóstico"  # ...título genérico del lado
             cols = grilla(titulo, lados[lado])  # Cuadrícula de mapas con su título
         ident = slug(variable, usados)  # Identificador de enlace de esta Variable
-        indice.append(f'<li><a href="#{ident}">{html.escape(variable)}</a></li>')  # Entrada del índice
+        indice[fila_indice(variable)].append(f'<li><a href="#{ident}">{html.escape(variable)}</a></li>')  # Entrada del índice en la fila que le corresponde
         secciones.append(f'<section id="{ident}"><h2>{html.escape(variable)}<a class="volver" href="#indice">↑ Índice</a></h2>{cols}</section>')  # Sección con título central y enlace para volver
     return (  # Documento HTML completo
         '<!DOCTYPE html><html lang="es"><head><meta charset="utf-8">'  # Cabecera: codificación UTF-8
@@ -285,7 +304,7 @@ def construir_html(grupos: dict, hoy: date, generado: datetime) -> str:  # Arma 
         f"<title>{TITULO}</title><style>{CSS}</style></head><body>"  # Título de la pestaña y estilos
         f"<header><h1>{TITULO}</h1>"  # Título principal
         f'<div class="meta">Generado el {generado:%d-%m-%Y %H:%M}</div></header>'  # Fecha y hora
-        f'<main><nav id="indice"><h2>Índice</h2><ul>{"".join(indice)}</ul></nav>'  # Índice con un enlace por Variable
+        f'<main><nav id="indice"><h2>Índice</h2>{"".join(f"<ul>{chr(10).join(fila)}</ul>" for fila in indice if fila)}</nav>'  # Índice: una lista por fila (las filas vacías no se dibujan)
         f"{''.join(secciones)}</main>"  # Secciones de las Variables
         '<a class="subir" href="#indice">↑ Índice</a>'  # Botón flotante para volver al índice
         '<div id="zoom" hidden><img alt=""><p></p></div>'  # Capa única para ampliar el mapa (imagen y título se rellenan al hacer clic)
