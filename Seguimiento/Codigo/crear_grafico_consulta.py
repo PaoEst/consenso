@@ -63,7 +63,7 @@ MESES = ["enero", "febrero", "marzo", "abril", "mayo", "junio", "julio", "agosto
 # Constantes (copiadas de graficar_aportes.py y consenso_comun.py)
 # --------------------------------------------------------------------------
 
-VERSION_CODIGO = "2026-11-20.2"                 # se actualiza en cada publicación (aparece en el pie de las páginas)
+VERSION_CODIGO = "2026-11-20.3"                 # se actualiza en cada publicación (aparece en el pie de las páginas)
 ARCHIVO_APORTES = "Seguimiento_Aportes.xlsx"
 ARCHIVO_DRIVERS = "Seguimiento_Drivers.xlsx"
 HOJA_APORTES = "Aportes %MH"
@@ -433,21 +433,47 @@ def _valor_celda(ws_f, ws_v, coord: str, profundidad: int = 0):
 
 
 def _filas_fechas(ws_f, ws_v) -> list[int]:
-    """Filas de la hoja Fechas con un consenso (columna B con fecha o fórmula), en orden."""
+    """Filas registradas de la hoja Fechas (cualquier celda de A a N con valor o fórmula), en orden.
+    La última de esta lista es siempre 'la última fila registrada'."""
     filas = []
     for r in range(2, ws_f.max_row + 1):
-        if ws_v.cell(r, 2).value not in (None, "") or ws_f.cell(r, 2).value not in (None, ""):
+        if any(ws_v.cell(r, c).value not in (None, "") or ws_f.cell(r, c).value not in (None, "")
+               for c in range(1, 5 + 2 * N_SEMANAS)):
             filas.append(r)
     return filas
 
 
-def _parsear_fila_fechas(ws_f, ws_v, fila: int, silencioso: bool = False) -> dict:
-    """Fecha del consenso, horizonte y semanas S1..S5 (inicio/fin) de una fila de la hoja Fechas."""
+def _parsear_fila_fechas(ws_f, ws_v, fila: int, silencioso: bool = False, estricto: bool = True) -> dict:
+    """Fecha del consenso, horizonte y semanas S1..S5 (inicio/fin) de una fila de la hoja Fechas.
+
+    `semanas`: semanas votables (dentro del horizonte; las usa la votación). `semanas_dibujo`: TODAS las
+    semanas con inicio y fin llenos (inicio <= fin), tal como están en la fila (las usa el gráfico de consulta).
+    Con estricto=False, si faltan las fechas del horizonte o del consenso se derivan de las semanas."""
     aviso = log.debug if silencioso else log.warning
     info = log.debug if silencioso else log.info
     v = [_valor_celda(ws_f, ws_v, f"{get_column_letter(c)}{fila}") for c in range(1, 5 + 2 * N_SEMANAS)]
     out = {"fila": fila, "seguimiento_ini": _fecha(v[0]), "consenso": _fecha(v[1]),
-           "hor_ini": _fecha(v[2]), "hor_fin": _fecha(v[3]), "semanas": []}
+           "hor_ini": _fecha(v[2]), "hor_fin": _fecha(v[3]), "semanas": [], "semanas_dibujo": []}
+    for k in range(N_SEMANAS):
+        ini, fin = _fecha(v[4 + 2 * k]), _fecha(v[5 + 2 * k])
+        if ini is not None and fin is not None and ini <= fin:
+            out["semanas_dibujo"].append({"n": k + 1, "ini": ini, "fin": fin, "dias": (fin - ini).days + 1})
+        elif ini is not None or fin is not None:
+            aviso("Fechas fila %d: S%d con inicio/fin incompletos o invertidos (%s, %s); no se dibuja", fila,
+                  k + 1, ini.date() if ini is not None else None, fin.date() if fin is not None else None)
+    sd = out["semanas_dibujo"]
+    if not estricto:
+        if out["hor_ini"] is None and sd:
+            out["hor_ini"] = min(w["ini"] for w in sd)
+            aviso("Fechas fila %d: sin inicio del horizonte; se usa el inicio de la primera semana (%s)", fila,
+                  out["hor_ini"].date())
+        if out["hor_fin"] is None and sd:
+            out["hor_fin"] = max(w["fin"] for w in sd)
+            aviso("Fechas fila %d: sin fin del horizonte; se usa el fin de la última semana (%s)", fila,
+                  out["hor_fin"].date())
+        if out["consenso"] is None and out["hor_ini"] is not None:
+            out["consenso"] = out["hor_ini"]
+            aviso("Fechas fila %d: sin fecha de consenso; se usa el inicio del horizonte", fila)
     for faltante in ("consenso", "hor_ini", "hor_fin"):
         if out[faltante] is None:
             raise ValueError(f"Hoja '{HOJA_FECHAS}' fila {fila}: falta o es ilegible la fecha '{faltante}'")
@@ -476,7 +502,7 @@ def _parsear_fila_fechas(ws_f, ws_v, fila: int, silencioso: bool = False) -> dic
         dias_mes = max((fin_m - ini_m).days + 1, 0)
         out["semanas"].append({"n": k + 1, "ini": ini, "fin": fin, "dias": (fin - ini).days + 1,
                                "dias_mes": dias_mes})
-    if not out["semanas"]:
+    if not out["semanas"] and estricto:
         raise ValueError(f"Hoja Fechas fila {fila}: no hay ninguna semana dentro del horizonte")
     return out
 
@@ -489,10 +515,11 @@ def _abrir_fechas(ruta: Path):
     return wb_f[HOJA_FECHAS], wb_v[HOJA_FECHAS]
 
 
-def leer_fechas(ruta: Path, fecha=None) -> dict:
+def leer_fechas(ruta: Path, fecha=None, estricto: bool = True) -> dict:
     """Datos del consenso en curso. Cada consenso es una FILA de la hoja Fechas (historial);
     por defecto se usa la última fila con datos. Con `fecha` (AAAA-MM-DD) se usa la fila cuya
-    'Fecha de realización del consenso' coincide (la última si hay repetidas)."""
+    'Fecha de realización del consenso' coincide (la última si hay repetidas). `estricto=False` (gráfico de
+    consulta) tolera que falten las fechas del horizonte o del consenso derivándolas de las semanas."""
     ws_f, ws_v = _abrir_fechas(ruta)
     filas = _filas_fechas(ws_f, ws_v)
     if not filas:
@@ -513,10 +540,12 @@ def leer_fechas(ruta: Path, fecha=None) -> dict:
             raise ValueError(f"La hoja '{HOJA_FECHAS}' no tiene un consenso con fecha {objetivo.date()}")
         fila = cand[-1]
         motivo = f"fila con fecha de consenso {objetivo.date()}"
-    out = _parsear_fila_fechas(ws_f, ws_v, fila)
+    out = _parsear_fila_fechas(ws_f, ws_v, fila, estricto=estricto)
     log.info("Fechas: usando el consenso %d de %d (fila %d de la hoja; %s): consenso=%s horizonte=%s -> %s semanas=%s",
              filas.index(fila) + 1, len(filas), fila, motivo, out["consenso"].date(), out["hor_ini"].date(), out["hor_fin"].date(),
-             [(s["n"], str(s["ini"].date()), str(s["fin"].date()), s["dias"], s["dias_mes"]) for s in out["semanas"]])
+             [(w["n"], str(w["ini"].date()), str(w["fin"].date()), w["dias"], w["dias_mes"]) for w in out["semanas"]])
+    log.info("Fechas: semanas a dibujar (inicio y fin llenos): %s",
+             [(w["n"], str(w["ini"].date()), str(w["fin"].date())) for w in out["semanas_dibujo"]])
     return out
 
 
@@ -702,7 +731,8 @@ def leer_otros_pronosticos(ruta: Path, fechas: dict, cuencas: list[str]) -> dict
                 dias = list(pd.date_range(ini, ini + pd.offsets.MonthEnd(0)))
             elif freq == "semanal":
                 m = re.search(r"(\d+)", str(clave))
-                sem = next((s for s in fechas["semanas"] if m and s["n"] == int(m.group(1))), None)
+                sem = next((s for s in fechas.get("semanas_dibujo", fechas["semanas"])
+                            if m and s["n"] == int(m.group(1))), None)
                 if sem is None:
                     log.warning("Otros pronósticos [%s]: la semana %r (%s) no existe en la hoja Fechas del consenso",
                                 hoja, clave, modelo)
@@ -788,8 +818,9 @@ def agregar_otros_pronosticos(fig, series: list[dict], ini, x_fin, row: int = 1,
 # --------------------------------------------------------------------------
 # Figura de una cuenca
 # --------------------------------------------------------------------------
-def construir_figura(cuenca, serie, seg, orden_vars, ini, hor_ini, hor_fin, otros=()):
-    x_fin = hor_fin + pd.Timedelta(days=1)
+def construir_figura(cuenca, serie, seg, orden_vars, ini, hor_ini, hor_fin, otros=(), semanas=()):
+    # el eje llega hasta el fin de la última semana llena (si es posterior al fin del horizonte)
+    x_fin = max([hor_fin] + [w["fin"] for w in semanas]) + pd.Timedelta(days=1)
     alto_drv = altura_panel_drivers(max(len(orden_vars), 1))
     alto_tot = int(400 + alto_drv + 100)
     frac = min(0.62, max(0.25, alto_drv / alto_tot))
@@ -817,9 +848,23 @@ def construir_figura(cuenca, serie, seg, orden_vars, ini, hor_ini, hor_fin, otro
     agregar_barras_drivers(fig, seg, orden_vars, row=2)                # drivers: una fila por variable
 
     formas = [dict(type="rect", xref="x", yref="paper", x0=hor_ini, x1=x_fin, y0=0, y1=1,
-                   fillcolor="rgba(31,95,139,0.05)", line=dict(width=0), layer="below"),
-              dict(type="line", xref="x", yref="paper", x0=hor_ini, x1=hor_ini, y0=0, y1=1.0,
-                   line=dict(color="#d62728", width=2, dash="dash"))]
+                   fillcolor="rgba(31,95,139,0.05)", line=dict(width=0), layer="below")]
+    # Semanas (hoja Fechas, solo las que tienen inicio y fin llenos): límites con una línea suave
+    limites = sorted({x for w in semanas for x in (w["ini"], w["fin"] + pd.Timedelta(days=1))
+                      if ini <= x <= x_fin and x != hor_ini})
+    for x in limites:
+        formas.append(dict(type="line", xref="x", yref="paper", x0=x, x1=x, y0=0, y1=1, layer="below",
+                           line=dict(color="rgba(90,110,130,0.40)", width=1, dash="dot")))
+    formas.append(dict(type="line", xref="x", yref="paper", x0=hor_ini, x1=hor_ini, y0=0, y1=1.0,
+                       line=dict(color="#d62728", width=2, dash="dash")))
+    # Rótulos S1, S2... centrados en la parte visible de cada semana, en la franja entre los dos paneles
+    y_franja = (fig.layout.yaxis.domain[0] + fig.layout.yaxis2.domain[1]) / 2
+    rotulos = []
+    for w in semanas:
+        a, b = max(w["ini"], ini), min(w["fin"] + pd.Timedelta(days=1), x_fin)
+        if a < b:
+            rotulos.append(dict(x=a + (b - a) / 2, y=y_franja, xref="x", yref="paper", yanchor="middle",
+                                text=f"S{w['n']}", showarrow=False, font=dict(size=11, color="#5b6773")))
     anot = [
         dict(x=ini + (hor_ini - ini) / 2, y=1.0, xref="x", yref="paper", yanchor="bottom",
              text="<b>Seguimiento</b>", showarrow=False, font=dict(size=13)),
@@ -834,7 +879,7 @@ def construir_figura(cuenca, serie, seg, orden_vars, ini, hor_ini, hor_fin, otro
                          tickformat="%d %b\n%Y", row=fila, col=1)
     fig.update_layout(
         height=alto_tot, template="plotly_white", hovermode="closest", shapes=formas,
-        annotations=list(fig.layout.annotations) + anot, hoverlabel=dict(align="left"),
+        annotations=list(fig.layout.annotations) + anot + rotulos, hoverlabel=dict(align="left"),
         margin=dict(l=20, r=20, t=40, b=60), plot_bgcolor="#fbfbf9",
         legend=dict(orientation="h", x=0.5, xanchor="center", y=-0.1))
     return fig
@@ -928,8 +973,10 @@ def main() -> int:
             log.info("Entrada: %s | %d bytes | modificado %s | sha256=%s", p.resolve(), st.st_size,
                      datetime.fromtimestamp(st.st_mtime).isoformat(timespec="seconds"), sha256(p))
 
-        fechas = leer_fechas(args.consenso, args.fecha_consenso)   # solo hoja Fechas
+        fechas = leer_fechas(args.consenso, args.fecha_consenso, estricto=False)   # solo hoja Fechas (última fila)
         hor_ini, hor_fin = fechas["hor_ini"], fechas["hor_fin"]
+        semanas = fechas["semanas_dibujo"]
+        fin_graf = max([hor_fin] + [w["fin"] for w in semanas])   # hasta donde llega el gráfico
         aportes = leer_aportes(args.aportes)
         ini, _ = definir_ventana(args.aportes, aportes)
         if ini >= hor_ini:
@@ -946,15 +993,15 @@ def main() -> int:
                 log.warning("Cuenca '%s': sin ningún dato -> no se incluye", cuenca)
                 omitidas.append((cuenca, "sin datos"))
                 continue
-            serie = aportes.loc[(aportes["Fecha"] >= ini) & (aportes["Fecha"] <= hor_fin),
+            serie = aportes.loc[(aportes["Fecha"] >= ini) & (aportes["Fecha"] <= fin_graf),
                                 ["Fecha", cuenca]].dropna()
             if serie.empty:
                 log.warning("Cuenca '%s': sin datos en la ventana -> no se incluye", cuenca)
                 omitidas.append((cuenca, "sin datos en la ventana"))
                 continue
-            seg, orden_vars = drivers_combinados(cuenca, ctx, ini, hor_fin)
+            seg, orden_vars = drivers_combinados(cuenca, ctx, ini, fin_graf)
             fig = construir_figura(cuenca, serie, seg, orden_vars, ini, hor_ini, hor_fin,
-                                   otros.get(cuenca, []))
+                                   otros.get(cuenca, []), semanas)
             ultimo = serie["Fecha"].max()
             figuras[cuenca] = {
                 "fig": json.loads(pio.to_json(fig)),

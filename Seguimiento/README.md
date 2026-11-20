@@ -137,7 +137,10 @@ Genera **un solo archivo** `Salidas/Consulta/Consulta_Seguimiento_Pronostico_AAA
 doble clic y tiene el selector **Cuenca** arriba a la izquierda para cambiar de cuenca dentro de la misma página. Muestra el seguimiento de aportes, los drivers de
 seguimiento y los drivers pronosticados (una fila por variable, orden de la hoja `Prioridad`), la línea roja de inicio del pronóstico y los otros modelos de
 `Otros_pronosticos.xlsx` con su leyenda (clic para ocultar/mostrar). De `Consenso.xlsx` solo lee la hoja `Fechas` (última fila, o `--fecha-consenso AAAA-MM-DD`)
-para el inicio y fin del pronóstico y las semanas S1..S5 de los pronósticos semanales.
+para el inicio y fin del pronóstico y las semanas S1..S5 de los pronósticos semanales. **Siempre usa la última fila registrada** de `Fechas`.
+El gráfico **delimita las semanas con una línea suave y las rotula S1, S2, S3…** (en la franja entre el panel de aportes y el de drivers), según las columnas
+`Inicio S#` / `fin S#` de esa fila: solo se dibuja una semana si tiene **ambos** campos llenos (y el inicio no es posterior al fin); si, por ejemplo, S5 está vacía,
+no aparece. El eje se extiende hasta el fin de la última semana llena.
 
 ## Solo seguimiento (`graficar_aportes.py`)
 ```
