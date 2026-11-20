@@ -8,7 +8,7 @@ Seguimiento/
   README.md
   Codigo/                      <- solo programas (no se comparte con los evaluadores)
     crear_graficos_consenso.py     paso 1: genera los gráficos de votación
-    crear_grafico_consulta.py      gráfico de SOLO CONSULTA (sin votación), programa aparte con selector de cuenca
+    crear_grafico_consulta.py      gráfico de SOLO CONSULTA (sin votación), con selector de cuenca; ARCHIVO AUTOCONTENIDO (funciona solo)
     consolidar_votos.py            paso 3: registra votos + resultado del consenso + gráfico Consolidado
     evaluacion.py                  evalúa por semana los consensos marcados SI (hoja Evaluación); corre sola al final del paso 1
     graficar_aportes.py            (solo seguimiento, sin votación)  ·  consenso_comun.py (funciones compartidas)
@@ -127,7 +127,9 @@ MSE = Σ(MSE·días)/Σ días y RMSE = √MSE; igual para MAPE. Si la evaluació
 y queda un aviso en pantalla y en el log (`--sin-evaluacion` la omite).
 
 ## Gráfico de solo consulta (sin votación): `crear_grafico_consulta.py`
-Programa **independiente** de la votación (no usa votos, `Registros`, `Consolidado` ni `Evaluación`, y no enlaza con las páginas de votación):
+Programa **independiente** de la votación (no usa votos, `Registros`, `Consolidado` ni `Evaluación`, y no enlaza con las páginas de votación).
+Es un **archivo autocontenido**: funciona aunque en `Codigo/` no esté ningún otro programa; basta con ese archivo, la carpeta `Insumos/` con los Excel
+y `pip install pandas plotly openpyxl`. (Duplica a propósito la lógica que comparte con los demás programas; si esa lógica cambia allá, hay que actualizarla en este archivo.)
 ```
 python crear_grafico_consulta.py            # desde Codigo/
 ```
