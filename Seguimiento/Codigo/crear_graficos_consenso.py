@@ -38,7 +38,6 @@ import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 
 from consenso_comun import (ARCHIVO_CONSENSO, ARCHIVO_OTROS, ARCHIVO_PRONOSTICO, BASE, CARPETA_CONSOLIDADO, INSUMOS,
-                            CARPETA_INFORMATIVO, PREFIJO_INFORMATIVO,
                             ESTILO_NAV, SALIDAS, agregar_barras_drivers, altura_panel_drivers,
                             agregar_otros_pronosticos, barra_navegacion, cargar_drivers, carpeta_corrida, drivers_combinados,
                             escribir_indice, etiqueta_semana_corta, leer_evaluadores, leer_fechas,
@@ -54,7 +53,7 @@ C_PRONOSTICO = "#1f5f8b"
 # --------------------------------------------------------------------------
 # Figura
 # --------------------------------------------------------------------------
-def construir_figura(cuenca, serie, seg, orden_vars, ini, fechas, otros=(), votar=True):
+def construir_figura(cuenca, serie, seg, orden_vars, ini, fechas, otros=()):
     hor_ini, hor_fin = fechas["hor_ini"], fechas["hor_fin"]
     x_fin = hor_fin + pd.Timedelta(days=1)
     n = max(len(orden_vars), 1)
@@ -82,16 +81,14 @@ def construir_figura(cuenca, serie, seg, orden_vars, ini, fechas, otros=(), vota
                   annotation_text="Media histórica (100 %)", annotation_position="top left",
                   annotation_font=dict(size=11, color="#444"))
 
-    # Pronóstico del evaluador (se actualiza desde JS): línea escalonada y etiquetas (solo en la votación)
-    idx_linea = idx_texto = None
-    if votar:
-        idx_linea = len(fig.data)
-        fig.add_trace(go.Scatter(x=[None], y=[None], mode="lines", showlegend=False, connectgaps=False,
-                                 line=dict(color=C_PRONOSTICO, width=3), hoverinfo="skip"), row=1, col=1)
-        idx_texto = len(fig.data)
-        fig.add_trace(go.Scatter(x=[None], y=[None], mode="text", showlegend=False, hoverinfo="skip",
-                                 textposition="top center",
-                                 textfont=dict(color=C_PRONOSTICO, size=12)), row=1, col=1)
+    # Pronóstico del evaluador (se actualiza desde JS): línea escalonada y etiquetas
+    idx_linea = len(fig.data)
+    fig.add_trace(go.Scatter(x=[None], y=[None], mode="lines", showlegend=False, connectgaps=False,
+                             line=dict(color=C_PRONOSTICO, width=3), hoverinfo="skip"), row=1, col=1)
+    idx_texto = len(fig.data)
+    fig.add_trace(go.Scatter(x=[None], y=[None], mode="text", showlegend=False, hoverinfo="skip",
+                             textposition="top center",
+                             textfont=dict(color=C_PRONOSTICO, size=12)), row=1, col=1)
 
     # Otros pronósticos (modelos externos) en la zona del pronóstico, con leyenda propia
     agregar_otros_pronosticos(fig, list(otros), ini, x_fin, row=1)
@@ -305,48 +302,6 @@ validarEvaluador(); dibujar(valoresSemanas());
 """
 
 
-PLANTILLA_INFO = r"""<!doctype html>
-<html lang="es"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>__TITULO_PAGINA__</title>
-__ESTILO_NAV__
-<style>
-:root{--txt:#1d2733;--sub:#5b6773;--bg:#fff;--brd:#d9dde3;--azul:#1f5f8b}
-@media (prefers-color-scheme: dark){:root{--txt:#e8ecf1;--sub:#a3adb8;--bg:#161b22;--brd:#34404d;--azul:#7fb3e6}}
-body{margin:0;font-family:Segoe UI,Arial,sans-serif;color:var(--txt);background:var(--bg)}
-header{padding:12px 20px;border-bottom:1px solid var(--brd);text-align:center}
-h1{font-size:20px;margin:0;font-weight:600} .sub{color:var(--sub);font-size:13px;margin-top:4px}
-#grafico{padding:10px 20px 20px}
-</style>
-<script>__PLOTLYJS__</script></head><body>
-__NAV__
-<header><h1>__TITULO__</h1><div class="sub">__SUBTITULO__</div></header>
-<div id="grafico">__GRAFICO__</div>
-<script>
-const gd = document.getElementById('grafico').getElementsByClassName('plotly-graph-div')[0];
-window.addEventListener('load', () => setTimeout(() => Plotly.Plots.resize(gd), 50));
-</script>__PIE__</body></html>
-"""
-
-
-def escribir_informativo(ruta: Path, cuenca: str, fig, fechas, carpeta: Path) -> None:
-    """Página de consulta (sin votación): seguimiento, drivers, pronóstico de drivers y otros modelos."""
-    archivo = nombre_archivo(cuenca)
-    registrar_cuenca(carpeta, archivo, cuenca)
-    div = fig.to_html(full_html=False, include_plotlyjs=False,
-                      config={"displaylogo": False, "responsive": True})
-    sub = (f"Pronóstico {fechas['hor_ini']:%d/%m/%Y} – {fechas['hor_fin']:%d/%m/%Y} · "
-           f"consenso del {fechas['consenso']:%d/%m/%Y} · solo consulta (sin votación)")
-    pagina = (PLANTILLA_INFO.replace("__TITULO_PAGINA__", html.escape(f"Informativo - {cuenca}"))
-              .replace("__TITULO__", html.escape(f"Seguimiento y pronóstico · {cuenca}"))
-              .replace("__SUBTITULO__", html.escape(sub))
-              .replace("__ESTILO_NAV__", ESTILO_NAV)
-              .replace("__NAV__", "<!--NAV:%s-->" % archivo)
-              .replace("__GRAFICO__", div)
-              .replace("__PIE__", pie_version())
-              .replace("__PLOTLYJS__", plotly_js()))
-    ruta.write_text(pagina, encoding="utf-8")
-
-
 def js_seguro(obj) -> str:
     return json.dumps(obj, ensure_ascii=False).replace("</", "<\\/")
 
@@ -398,8 +353,6 @@ def main() -> int:
     ap.add_argument("--logs", default=BASE / "logs", type=Path)
     ap.add_argument("--sin-evaluacion", action="store_true",
                     help="no evaluar (hoja Evaluación) los consensos marcados SI al terminar")
-    ap.add_argument("--sin-informativo", action="store_true",
-                    help="no generar las páginas de consulta sin votación (carpeta informativo/)")
     ap.add_argument("--fecha-corrida", default=None, help="AAAA-MM-DD (por defecto: fecha de realización del consenso)")
     args = ap.parse_args()
 
@@ -442,8 +395,6 @@ def main() -> int:
         carpeta = carpeta_corrida(args.salida, fecha_corrida)
         (carpeta / "votos").mkdir(parents=True, exist_ok=True)
         (carpeta / CARPETA_CONSOLIDADO).mkdir(exist_ok=True)
-        if not args.sin_informativo:
-            (carpeta / CARPETA_INFORMATIVO).mkdir(exist_ok=True)
         log.info("Carpeta de corrida: %s", carpeta.resolve())
 
         generados, omitidos = [], []
@@ -467,12 +418,6 @@ def main() -> int:
             ruta = carpeta / f"Consenso_{nombre_archivo(cuenca)}.html"
             escribir_html(ruta, cuenca, fig, il, it, fechas, evaluadores, obs, carpeta)
             generados.append((cuenca, ruta.name))
-            if not args.sin_informativo:
-                fig_i, _, _ = construir_figura(cuenca, serie, seg, orden_vars, ini, fechas,
-                                               otros.get(cuenca, []), votar=False)
-                ruta_i = carpeta / CARPETA_INFORMATIVO / f"{PREFIJO_INFORMATIVO}_{nombre_archivo(cuenca)}.html"
-                escribir_informativo(ruta_i, cuenca, fig_i, fechas, carpeta)
-                log.info("Cuenca '%s': informativo -> %s", cuenca, ruta_i.name)
             log.info("Cuenca '%s': %s | aportes=%d pts (%s -> %s) | real a la fecha: %d días %s | "
                      "variables=%d barras=%d (seguimiento=%d, pronóstico=%d)", cuenca, ruta.name,
                      len(serie), serie["Fecha"].min().date(), serie["Fecha"].max().date(), len(obs),
@@ -491,19 +436,6 @@ def main() -> int:
             txt = ruta.read_text(encoding="utf-8")
             ruta.write_text(txt.replace("<!--NAV:%s-->" % archivo,
                                         barra_navegacion(carpeta, archivo, "votacion")), encoding="utf-8")
-        if not args.sin_informativo:
-            for archivo in [nombre_archivo(c) for c, _ in generados]:
-                ruta_i = carpeta / CARPETA_INFORMATIVO / f"{PREFIJO_INFORMATIVO}_{archivo}.html"
-                txt = ruta_i.read_text(encoding="utf-8")
-                ruta_i.write_text(txt.replace("<!--NAV:%s-->" % archivo,
-                                              barra_navegacion(carpeta, archivo, "informativo")), encoding="utf-8")
-            # la votación enlaza a su informativo (ahora que existe)
-            for archivo in [nombre_archivo(c) for c, _ in generados]:
-                ruta = carpeta / f"Consenso_{archivo}.html"
-                nav_v = barra_navegacion(carpeta, archivo, "votacion")
-                txt = ruta.read_text(encoding="utf-8")
-                ruta.write_text(re.sub(r'<nav class="nav">.*?</nav>', lambda m: nav_v, txt, count=1, flags=re.S),
-                                encoding="utf-8")
         escribir_indice(carpeta, fechas)
 
         # Evaluación semanal de los consensos marcados SI (no bloquea los gráficos si falla)

@@ -242,8 +242,6 @@ from graficar_aportes import (ARCHIVO_APORTES, ARCHIVO_DRIVERS, AZUL, NEUTRO, OC
 
 ARCHIVO_INDICE = "indice_cuencas.json"   # archivo -> nombre de cuenca (para el índice/selector)
 CARPETA_CONSOLIDADO = "consolidado"
-CARPETA_INFORMATIVO = "informativo"       # páginas sin votación (solo consulta)
-PREFIJO_INFORMATIVO = "Informativo"
 PREFIJO_CONSOLIDADO = "Consolidado"
 
 
@@ -384,15 +382,13 @@ def cuencas_registradas(carpeta: Path) -> dict[str, str]:
 
 
 def barra_navegacion(carpeta: Path, actual: str, donde: str, ronda: int | None = None) -> str:
-    """HTML de la barra superior: enlace al índice, selector de cuenca (y de ronda) y enlaces cruzados.
+    """HTML de la barra superior: enlace al índice y selector de cuenca (y de ronda).
 
-    donde = 'votacion' (carpeta de corrida) | 'consolidado' (carpeta/consolidado/) |
-            'informativo' (carpeta/informativo/, sin votación)."""
+    donde = 'votacion' (carpeta de corrida) | 'consolidado' (carpeta/consolidado/)."""
     cuencas = cuencas_registradas(carpeta)
     en_cons = donde == "consolidado"
-    en_info = donde == "informativo"
     ruta_cons = carpeta / CARPETA_CONSOLIDADO
-    prefijo = "../" if (en_cons or en_info) else ""
+    prefijo = "../" if en_cons else ""
     opciones = []
     for archivo, nombre in cuencas.items():
         if en_cons:
@@ -405,10 +401,6 @@ def barra_navegacion(carpeta: Path, actual: str, donde: str, ronda: int | None =
                 continue
             r_dest = ronda if ronda in disp else max([r for r in disp if r < ronda] or [disp[0]])
             destino = f"{PREFIJO_CONSOLIDADO}_{archivo}_Ronda{r_dest}.html"
-        elif en_info:
-            destino = f"{PREFIJO_INFORMATIVO}_{archivo}.html"
-            if not (carpeta / CARPETA_INFORMATIVO / destino).exists():
-                continue
         else:
             destino = f"Consenso_{archivo}.html"
             if not (carpeta / destino).exists():
@@ -426,10 +418,6 @@ def barra_navegacion(carpeta: Path, actual: str, donde: str, ronda: int | None =
             ops = "".join(f'<option value="{PREFIJO_CONSOLIDADO}_{actual}_Ronda{r}.html"'
                           f'{" selected" if r == ronda else ""}>Ronda {r}</option>' for r in rondas)
             partes.append(f'<label>Ronda <select onchange="location.href=this.value">{ops}</select></label>')
-    if en_info and (carpeta / f"Consenso_{actual}.html").exists():
-        partes.append(f'<a href="../Consenso_{html.escape(actual)}.html">Ir a la votación ›</a>')
-    if donde == "votacion" and (carpeta / CARPETA_INFORMATIVO / f"{PREFIJO_INFORMATIVO}_{actual}.html").exists():
-        partes.append(f'<a href="{CARPETA_INFORMATIVO}/{PREFIJO_INFORMATIVO}_{html.escape(actual)}.html">Ver informativo (sin votación) ›</a>')
     return '<nav class="nav">' + "".join(partes) + "</nav>"
 
 
@@ -453,8 +441,6 @@ def escribir_indice(carpeta: Path, fechas: dict) -> Path:
         if not (carpeta / f"Consenso_{archivo}.html").exists():
             continue
         enlaces = [f'<a href="Consenso_{html.escape(archivo)}.html">Votación</a>']
-        if (carpeta / CARPETA_INFORMATIVO / f"{PREFIJO_INFORMATIVO}_{archivo}.html").exists():
-            enlaces.append(f'<a href="{CARPETA_INFORMATIVO}/{PREFIJO_INFORMATIVO}_{html.escape(archivo)}.html">Informativo</a>')
         for f in sorted((carpeta / CARPETA_CONSOLIDADO).glob(f"{PREFIJO_CONSOLIDADO}_{archivo}_Ronda*.html")):
             m = re.search(r"Ronda(\d+)\.html$", f.name)
             enlaces.append(f'<a href="{CARPETA_CONSOLIDADO}/{html.escape(f.name)}">Consolidado ronda {m.group(1)}</a>')

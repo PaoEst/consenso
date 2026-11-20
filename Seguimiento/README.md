@@ -7,7 +7,8 @@ Proyecto independiente para el consenso de expertos sobre los aportes (% de la m
 Seguimiento/
   README.md
   Codigo/                      <- solo programas (no se comparte con los evaluadores)
-    crear_graficos_consenso.py     paso 1: genera los gráficos de votación e informativos
+    crear_graficos_consenso.py     paso 1: genera los gráficos de votación
+    crear_grafico_consulta.py      gráfico de SOLO CONSULTA (sin votación), programa aparte con selector de cuenca
     consolidar_votos.py            paso 3: registra votos + resultado del consenso + gráfico Consolidado
     evaluacion.py                  evalúa por semana los consensos marcados SI (hoja Evaluación); corre sola al final del paso 1
     graficar_aportes.py            (solo seguimiento, sin votación)  ·  consenso_comun.py (funciones compartidas)
@@ -17,10 +18,10 @@ Seguimiento/
     Consenso.xlsx                  (fechas, evaluadores; aquí se escriben Registros y Consolidado)
     Otros_pronosticos.xlsx         (opcional: modelos externos)
   Salidas/                     <- resultados; esta es la carpeta que se comparte (SharePoint)
+    Consulta/                      Consulta_Seguimiento_Pronostico_AAAA-MM-DD.html (gráfico de solo consulta)
     <año>/<mes>/<AAAA-MM-DD>/      fecha = "Fecha de realización del consenso" de Consenso.xlsx > Fechas
       index.html                   índice: enlaces a cada cuenca (votación y Consolidado)
       Consenso_<cuenca>.html       gráfico de votación
-      informativo/                 Informativo_<cuenca>.html: mismas gráficas pero SIN votación (solo consulta)
       votos/                       aquí se dejan los archivos voto_*.json
       consolidado/                 Consolidado_<cuenca>_Ronda<N>.html
 ```
@@ -58,7 +59,7 @@ Los scripts **siempre leen los Excel de la carpeta `Insumos/`** (hermana de `Cod
 - Ante cualquier error revisa `logs\ejecucion.log`.
 
 > **Después de actualizar el código** (descargar una versión nueva), vuelve a correr `python crear_graficos_consenso.py` y abre los HTML nuevos: los HTML ya
-> generados conservan el comportamiento de la versión con la que se crearon. Al pie de cada página (votación, informativo y Consolidado) aparece
+> generados conservan el comportamiento de la versión con la que se crearon. Al pie de cada página (votación, consulta y Consolidado) aparece
 > "Generado el AAAA-MM-DD HH:MM · versión del código X"; si no coincide con la versión que descargaste, la página es antigua.
 
 ## Flujo del consenso (ejecutar dentro de `Codigo/`, con los Excel de `Insumos/` cerrados)
@@ -125,10 +126,16 @@ Con P = valor pronosticado de la semana (el mismo para todos sus días) y Od = o
 MSE = Σ(MSE·días)/Σ días y RMSE = √MSE; igual para MAPE. Si la evaluación falla (p. ej. `Consenso.xlsx` abierto en Excel), los gráficos se generan igual
 y queda un aviso en pantalla y en el log (`--sin-evaluacion` la omite).
 
-## Páginas informativas (sin votación)
-`crear_graficos_consenso.py` genera además, en la misma corrida, `Salidas/<año>/<mes>/<fecha>/informativo/Informativo_<cuenca>.html`:
-seguimiento de aportes y de drivers, drivers pronosticados, otros modelos de aportes (`Otros_pronosticos.xlsx`) y leyenda, **sin** cajones
-de voto ni GUARDAR. Están enlazadas desde `index.html` y desde cada página de votación. Para omitirlas: `python crear_graficos_consenso.py --sin-informativo`.
+## Gráfico de solo consulta (sin votación): `crear_grafico_consulta.py`
+Programa **independiente** de la votación (no usa votos, `Registros`, `Consolidado` ni `Evaluación`, y no enlaza con las páginas de votación):
+```
+python crear_grafico_consulta.py            # desde Codigo/
+```
+Genera **un solo archivo** `Salidas/Consulta/Consulta_Seguimiento_Pronostico_AAAA-MM-DD.html` (fecha de generación en el nombre; `--fecha` la fija), que se abre con
+doble clic y tiene el selector **Cuenca** arriba a la izquierda para cambiar de cuenca dentro de la misma página. Muestra el seguimiento de aportes, los drivers de
+seguimiento y los drivers pronosticados (una fila por variable, orden de la hoja `Prioridad`), la línea roja de inicio del pronóstico y los otros modelos de
+`Otros_pronosticos.xlsx` con su leyenda (clic para ocultar/mostrar). De `Consenso.xlsx` solo lee la hoja `Fechas` (última fila, o `--fecha-consenso AAAA-MM-DD`)
+para el inicio y fin del pronóstico y las semanas S1..S5 de los pronósticos semanales.
 
 ## Solo seguimiento (`graficar_aportes.py`)
 ```
